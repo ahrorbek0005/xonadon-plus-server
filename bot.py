@@ -2963,50 +2963,104 @@ def handle_message(msg):
     # Admin actions
     if db_manager.is_bot_admin(chat_id):
         if text == "➕ Yangi haydovchi qo‘shish" or text == "/add_driver":
-            user_sub["admin_state"] = "awaiting_driver_data"
+            user_sub["admin_state"] = "awaiting_driver_name"
             save_subscribers(subs)
             msg_prompt = (
-                "➕ <b>YANGI HAYDOVCHI QO‘SHISH</b>\n\n"
-                "Iltimos, yangi haydovchi ma'lumotlarini quyidagi formatda yuboring:\n\n"
-                "<code>F.I.Sh | Telefon | Mashina_raqami | Parol</code>\n\n"
-                "<i>Namunaviy ko‘rinish:</i>\n"
-                "<code>Islomov Javohir | +998901234567 | 30 782 AGA | gaz2026</code>"
+                "➕ <b>YANGI HAYDOVCHI QO‘SHISH (1/4-bosqich)</b>\n\n"
+                "1️⃣ Iltimos, yangi haydovchining <b>Ism va Familiyasini</b> kiriting:\n"
+                "<i>(Masalan: Ahror Suyunov)</i>"
             )
             send_message(chat_id, msg_prompt, parse_mode="HTML")
             return
 
-        elif user_sub.get("admin_state") == "awaiting_driver_data":
-            parts = [p.strip() for p in text.split("|")]
-            if len(parts) >= 3:
-                d_name = parts[0]
-                d_phone = parts[1]
-                d_plate = parts[2]
-                d_pass = parts[3] if len(parts) > 3 else "gaz2026"
+        # 1-bosqich: Ism-familiya kiritildi -> Telefon raqam so'rash
+        elif user_sub.get("admin_state") == "awaiting_driver_name":
+            # Check if user passed full line with pipes fallback
+            if "|" in text:
+                parts = [p.strip() for p in text.split("|")]
+                if len(parts) >= 3:
+                    d_name = parts[0]
+                    d_phone = parts[1]
+                    d_plate = parts[2]
+                    d_pass = parts[3] if len(parts) > 3 else "gaz2026"
+                    db_manager.add_driver(phone=d_phone, full_name=d_name, truck_plate=d_plate, password=d_pass, assigned_mfy="koksoy")
+                    user_sub.pop("admin_state", None)
+                    save_subscribers(subs)
+                    send_message(chat_id, f"✅ <b>HAYDOVCHI QO‘SHILDI!</b>\n👤 {d_name}\n📱 {d_phone}\n🚛 {d_plate}\n🔑 {d_pass}", parse_mode="HTML")
+                    return
 
-                res = db_manager.add_driver(
-                    phone=d_phone,
-                    full_name=d_name,
-                    truck_plate=d_plate,
-                    password=d_pass,
-                    assigned_mfy="koksoy"
-                )
-                user_sub.pop("admin_state", None)
-                save_subscribers(subs)
+            d_name = text.strip()
+            user_sub["new_d_name"] = d_name
+            user_sub["admin_state"] = "awaiting_driver_phone"
+            save_subscribers(subs)
+            prompt = (
+                f"👤 <b>Haydovchi:</b> {d_name} ✅\n\n"
+                "2️⃣ Endi haydovchining <b>Telefon raqamini</b> kiriting:\n"
+                "<i>(Masalan: +998940401009)</i>"
+            )
+            send_message(chat_id, prompt, parse_mode="HTML")
+            return
 
-                succ_text = (
-                    f"✅ <b>HAYDOVCHI MUVAFFAQIYATLI QO‘SHILDI!</b>\n\n"
-                    f"👤 <b>F.I.Sh:</b> {d_name}\n"
-                    f"📱 <b>Login (Telefon):</b> <code>{d_phone}</code>\n"
-                    f"🚛 <b>Mashina raqami:</b> <code>{d_plate}</code>\n"
-                    f"📍 <b>Hudud:</b> «Ko‘ksoy» MFY, Nishon tumani\n"
-                    f"🔑 <b>Kirish paroli:</b> <code>{d_pass}</code>\n\n"
-                    f"Endi haydovchi ilovaga ushbu telefon va parol orqali kira oladi!"
-                )
-                send_message(chat_id, succ_text, parse_mode="HTML")
-                return
-            else:
-                send_message(chat_id, "⚠️ Iltimos, ma'lumotlarni to‘g‘ri formatda yuboring:\n<code>F.I.Sh | Telefon | Mashina_raqami | Parol</code>", parse_mode="HTML")
-                return
+        # 2-bosqich: Telefon kiritildi -> Mashina raqamini so'rash
+        elif user_sub.get("admin_state") == "awaiting_driver_phone":
+            d_phone = text.strip()
+            user_sub["new_d_phone"] = d_phone
+            user_sub["admin_state"] = "awaiting_driver_plate"
+            save_subscribers(subs)
+            prompt = (
+                f"📱 <b>Telefon:</b> <code>{d_phone}</code> ✅\n\n"
+                "3️⃣ Endi gaz mashinasining <b>Davlat raqamini</b> kiriting:\n"
+                "<i>(Masalan: 70 M 260 EB yoki 70M260EB)</i>"
+            )
+            send_message(chat_id, prompt, parse_mode="HTML")
+            return
+
+        # 3-bosqich: Mashina raqami kiritildi -> Parol so'rash
+        elif user_sub.get("admin_state") == "awaiting_driver_plate":
+            raw_plate = text.strip().upper()
+            user_sub["new_d_plate"] = raw_plate
+            user_sub["admin_state"] = "awaiting_driver_password"
+            save_subscribers(subs)
+            prompt = (
+                f"🚛 <b>Mashina raqami:</b> <code>{raw_plate}</code> ✅\n\n"
+                "4️⃣ Endi haydovchining <b>Maxsus kirish parolini</b> kiriting:\n"
+                "<i>(Masalan: GENTRA yoki gaz2026)</i>"
+            )
+            send_message(chat_id, prompt, parse_mode="HTML")
+            return
+
+        # 4-bosqich: Parol kiritildi -> Bazaga saqlash va yakunlash
+        elif user_sub.get("admin_state") == "awaiting_driver_password":
+            d_pass = text.strip()
+            d_name = user_sub.get("new_d_name", "Haydovchi")
+            d_phone = user_sub.get("new_d_phone", "+998901234567")
+            d_plate = user_sub.get("new_d_plate", "30 782 AGA")
+
+            res = db_manager.add_driver(
+                phone=d_phone,
+                full_name=d_name,
+                truck_plate=d_plate,
+                password=d_pass,
+                assigned_mfy="koksoy"
+            )
+
+            user_sub.pop("admin_state", None)
+            user_sub.pop("new_d_name", None)
+            user_sub.pop("new_d_phone", None)
+            user_sub.pop("new_d_plate", None)
+            save_subscribers(subs)
+
+            succ_text = (
+                "✅ <b>HAYDOVCHI MUVAFFAQIYATLI QO‘SHILDI!</b>\n\n"
+                f"👤 <b>F.I.Sh:</b> {d_name}\n"
+                f"📱 <b>Login (Telefon):</b> <code>{d_phone}</code>\n"
+                f"🚛 <b>Mashina raqami:</b> <code>{d_plate}</code>\n"
+                f"📍 <b>Hudud:</b> «Ko‘ksoy» MFY, Nishon tumani\n"
+                f"🔑 <b>Kirish paroli:</b> <code>{d_pass}</code>\n\n"
+                "Endi haydovchi ilovaga ushbu telefon, mashina raqami va parol orqali kira oladi!"
+            )
+            send_message(chat_id, succ_text, parse_mode="HTML")
+            return
 
         elif text == "📋 Haydovchilar ro‘yxati" or text == "/drivers":
             drivers = db_manager.get_all_drivers()
@@ -3422,6 +3476,34 @@ class AlertApiHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
+        if self.path.startswith("/api/app-version"):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            version_info = {
+                "latest_version": "1.0.1",
+                "version_code": 101,
+                "release_date": "2026-10-16",
+                "download_url": "https://github.com/ahrorbek0005/xonadon-plus-server/raw/main/XonadonPlus.apk",
+                "changelog": [
+                    "Xaritadagi mashina axborot kartochkasi xarita ustidan tashqariga chiqarildi va qulaylashtirildi",
+                    "To‘liq ishlovchi QR-kod skaneri: real kamera, fonar (chiroq) va galereyadan rasm tanlash",
+                    "Onlayn versiya tekshirish va yangilanish tizimi qo‘shildi"
+                ]
+            }
+            self.wfile.write(json.dumps(version_info).encode("utf-8"))
+            return
+
+        if self.path.startswith("/api/driver/location"):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            loc = db_manager.get_driver_location("koksoy")
+            self.wfile.write(json.dumps({"driver": loc or {"lat": 38.665, "lng": 65.698, "status": "arrived"}}).encode("utf-8"))
+            return
+
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -3437,6 +3519,286 @@ class AlertApiHandler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps(resp).encode("utf-8"))
 
     def do_POST(self):
+
+        # --- API: 2FA FORGOT RECOVERY REQUEST (SEND 6-CHAR ALPHANUMERIC CODE TO BOT) ---
+        if self.path == "/api/auth/2fa-forgot-request":
+            try:
+                import random, string
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                body = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
+                data = json.loads(body)
+                phone = str(data.get("phone", "")).strip()
+                raw_phone = re.sub(r'\D', '', phone)
+
+                subs = load_subscribers()
+                target_chat_id = None
+                for cid, s in subs.items():
+                    s_phone = re.sub(r'\D', '', str(s.get("phone", "") or s.get("raw_phone", "")))
+                    if s_phone and (s_phone == raw_phone or s_phone.endswith(raw_phone[-9:]) or raw_phone.endswith(s_phone[-9:])):
+                        target_chat_id = s.get("chat_id") or cid
+                        break
+
+                if not target_chat_id:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({
+                        "ok": False,
+                        "message": "Ushbu telefon raqam Telegram botimizga ulanmagan. Iltimos, Telegramda @xonadon_plus_bot ga kirib /start bosing."
+                    }).encode("utf-8"))
+                    return
+
+                # 6-character random alphanumeric code (uppercase letters + numbers)
+                chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+                recovery_code = "".join(random.choice(chars) for _ in range(6))
+                db_manager.set_otp(raw_phone + "_2fa_reset", recovery_code, expire_secs=600)
+
+                msg = (
+                    "🔐 <b>Xonadon+ 2FA Parolini Tiklash</b>\n\n"
+                    "Ikki bosqichli maxfiy parolingizni tiklash uchun maxsus 6 xonali kodingiz:\n"
+                    f"🔑 <code>{recovery_code}</code>\n\n"
+                    "⚠️ <i>Xavfsizlik eslatmasi: Ushbu kodni hech kimga bermang! Kod 10 daqiqa davomida amal qiladi.</i>"
+                )
+                send_message(target_chat_id, msg, parse_mode="HTML")
+
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "ok": True,
+                    "message": "Maxsus 6 xonali tiklash kodi Telegram botingizga yuborildi!"
+                }).encode("utf-8"))
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
+            return
+
+        # --- API: 2FA FORGOT RECOVERY VERIFY ---
+        if self.path == "/api/auth/2fa-forgot-verify":
+            try:
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                body = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
+                data = json.loads(body)
+                phone = str(data.get("phone", "")).strip()
+                code = str(data.get("code", "")).strip().upper()
+                raw_phone = re.sub(r'\D', '', phone)
+
+                is_valid = db_manager.verify_otp(raw_phone + "_2fa_reset", code)
+                if not is_valid:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({
+                        "ok": False,
+                        "message": "❌ Tiklash kodi noto‘g‘ri yoki muddati o‘tgan!"
+                    }).encode("utf-8"))
+                    return
+
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "ok": True,
+                    "message": "Kod tasdiqlandi. Endi yangi 2FA parol o‘rnatishingiz mumkin."
+                }).encode("utf-8"))
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
+            return
+
+
+        # --- API: SEND SMS CODE DIRECTLY TO LINKED TELEGRAM BOT CHAT ---
+        if self.path == "/api/auth/send-sms-code":
+            try:
+                import random
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                body = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
+                data = json.loads(body)
+                phone = str(data.get("phone", "")).strip()
+                action = data.get("action", "login") # 'login' or 'register'
+                raw_phone = re.sub(r'\D', '', phone)
+
+                if len(raw_phone) < 9:
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"ok": False, "message": "Telefon raqam noto‘g‘ri!"}).encode("utf-8"))
+                    return
+
+                # If action is login, check if user exists in database
+                if action == "login":
+                    user = db_manager.get_user_by_phone(f"+{raw_phone}") or db_manager.get_user_by_phone(raw_phone)
+                    if not user:
+                        # Check last 9 digits in users table
+                        conn = db_manager.get_connection()
+                        c = conn.cursor()
+                        c.execute("SELECT * FROM users WHERE phone LIKE ?", (f"%{raw_phone[-9:]}%",))
+                        user = c.fetchone()
+                        conn.close()
+
+                    if not user:
+                        self.send_response(200)
+                        self.send_header("Content-Type", "application/json")
+                        self.send_header("Access-Control-Allow-Origin", "*")
+                        self.end_headers()
+                        self.wfile.write(json.dumps({
+                            "ok": False,
+                            "not_registered": True,
+                            "message": "❌ Bu telefon raqam tizimda ro‘yxatdan o‘tmagan! Iltimos, avval «Ro‘yxatdan o‘tish» bo‘limiga o‘ting."
+                        }).encode("utf-8"))
+                        return
+
+                # Check if phone is linked to Telegram bot
+                subs = load_subscribers()
+                target_chat_id = None
+                target_sub = None
+
+                for cid, s in subs.items():
+                    s_phone = re.sub(r'\D', '', str(s.get("phone", "") or s.get("raw_phone", "")))
+                    if s_phone and (s_phone == raw_phone or s_phone.endswith(raw_phone[-9:]) or raw_phone.endswith(s_phone[-9:])):
+                        target_chat_id = s.get("chat_id") or cid
+                        target_sub = s
+                        break
+
+                if not target_chat_id:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({
+                        "ok": False,
+                        "bot_linked": False,
+                        "message": "⚠️ Ushbu telefon raqam Telegram botimizga hali ulanmagan!\n\nIltimos, Telegramda @xonadon_plus_bot ga kiring, /start bosing va telefon raqamingizni yuboring."
+                    }).encode("utf-8"))
+                    return
+
+                # Generate 4-digit code
+                code = f"{random.randint(1000, 9999)}"
+                db_manager.set_otp(raw_phone, code)
+
+                # Send directly to this specific user's chat_id!
+                msg = (
+                    "🔥 <b>Xonadon+ Xavfsizlik Xizmati</b>\n\n"
+                    "Ilovaga kirish/ro‘yxatdan o‘tish uchun 4 xonali SMS kodingiz:\n"
+                    f"🔢 <code>{code}</code>\n\n"
+                    "⚠️ <i>Kodni hech kimga bermang! Kod 5 daqiqa davomida amal qiladi.</i>"
+                )
+                send_message(target_chat_id, msg, parse_mode="HTML")
+
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "ok": True,
+                    "phone": phone,
+                    "chat_id": target_chat_id,
+                    "message": "SMS kod Telegram botingizga yuborildi!"
+                }).encode("utf-8"))
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
+            return
+
+        # --- API: VERIFY SMS CODE ---
+        if self.path == "/api/auth/verify-sms-code":
+            try:
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                body = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
+                data = json.loads(body)
+                phone = str(data.get("phone", "")).strip()
+                code = str(data.get("code", "")).strip()
+                action = data.get("action", "login")
+                reg_data = data.get("register_data", {})
+                raw_phone = re.sub(r'\D', '', phone)
+
+                # Verify code
+                is_valid = db_manager.verify_otp(raw_phone, code)
+                if not is_valid:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({
+                        "ok": False,
+                        "message": "❌ Kiritilgan SMS kod noto‘g‘ri yoki muddati o‘tgan!"
+                    }).encode("utf-8"))
+                    return
+
+                if action == "register":
+                    fn = reg_data.get("first_name", "").strip()
+                    ln = reg_data.get("last_name", "").strip()
+                    full_name = f"{fn} {ln}".strip() or "Fuqaro"
+                    res = db_manager.register_user(
+                        phone=f"+{raw_phone}",
+                        full_name=full_name,
+                        role="resident",
+                        region="qashqadaryo",
+                        district="nishon",
+                        mfy="koksoy",
+                        street="koksoy_markaziy",
+                        house_number="1-uy"
+                    )
+                    user_obj = res.get("user") or {"phone": f"+{raw_phone}", "full_name": full_name, "role": "resident"}
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({
+                        "ok": True,
+                        "action": "register",
+                        "user": user_obj
+                    }).encode("utf-8"))
+                    return
+                else:
+                    # Login
+                    user = db_manager.get_user_by_phone(f"+{raw_phone}") or db_manager.get_user_by_phone(raw_phone)
+                    if not user:
+                        conn = db_manager.get_connection()
+                        c = conn.cursor()
+                        c.execute("SELECT * FROM users WHERE phone LIKE ?", (f"%{raw_phone[-9:]}%",))
+                        user = c.fetchone()
+                        conn.close()
+                    user_dict = dict(user) if user else {"phone": f"+{raw_phone}", "full_name": "Fuqaro", "role": "resident"}
+                    
+                    status_2fa = db_manager.get_user_2fa_status(f"+{raw_phone}")
+                    if not status_2fa.get("has_2fa"):
+                        status_2fa = db_manager.get_user_2fa_status(raw_phone)
+
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({
+                        "ok": True,
+                        "action": "login",
+                        "user": user_dict,
+                        "require_2fa": status_2fa.get("has_2fa", False),
+                        "hint": status_2fa.get("hint", "")
+                    }).encode("utf-8"))
+                    return
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
+            return
+
         # 1. AUTH REGISTER (Fuqaroni bazaga kiritish)
         if self.path == "/api/auth/register":
             try:
@@ -3522,13 +3884,39 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 password = data.get("password", "").strip()
 
                 if role == "driver":
-                    driver = db_manager.get_driver_by_phone(phone)
-                    if not driver:
-                        resp = {"ok": False, "message": "Ushbu haydovchi topilmadi! Administratorga murojaat qiling."}
-                    elif driver.get("password") != password:
-                        resp = {"ok": False, "message": "Parol noto‘g‘ri! Administrator bergan parolni kiriting."}
+                    raw_p = re.sub(r'\D', '', phone)
+                    plate_input = str(data.get("truck_plate", "")).replace(" ", "").upper().strip()
+                    password = str(data.get("password", "")).strip()
+
+                    conn = db_manager.get_connection()
+                    c = conn.cursor()
+                    c.execute("SELECT * FROM drivers WHERE phone LIKE ?", (f"%{raw_p[-9:]}%",))
+                    drivers = c.fetchall()
+                    conn.close()
+
+                    if not drivers:
+                        resp = {"ok": False, "message": "❌ Ushbu telefon raqamli haydovchi topilmadi! Administratorga murojaat qiling."}
                     else:
-                        resp = {"ok": True, "user": driver}
+                        matched = None
+                        if plate_input:
+                            for d in drivers:
+                                d_plate = str(d["truck_plate"] or "").replace(" ", "").upper()
+                                if d_plate == plate_input or plate_input in d_plate or d_plate in plate_input:
+                                    matched = d
+                                    break
+                            if not matched:
+                                resp = {"ok": False, "message": "❌ Mashina davlat raqami mos kelmadi! Administrator kiritgan raqamni kiriting."}
+                            elif matched["password"] != password:
+                                resp = {"ok": False, "message": "❌ Parol noto‘g‘ri! Administrator bergan parolni kiriting."}
+                            else:
+                                resp = {"ok": True, "user": dict(matched)}
+                        else:
+                            # If no plate provided, check first driver password
+                            d = drivers[0]
+                            if d["password"] != password:
+                                resp = {"ok": False, "message": "❌ Parol noto‘g‘ri! Administrator bergan parolni kiriting."}
+                            else:
+                                resp = {"ok": True, "user": dict(d)}
                 else:
                     user = db_manager.get_user_by_phone(phone)
                     if not user:

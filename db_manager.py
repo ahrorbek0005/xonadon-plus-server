@@ -365,3 +365,28 @@ def get_all_bot_admins():
 
 if __name__ == "__main__":
     init_db()
+
+
+# --- OTP VERIFICATION ---
+def set_otp(phone, code, expire_secs=300):
+    clean_p = re.sub(r'\D', '', phone)
+    expires_at = int(time.time()) + expire_secs
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("INSERT OR REPLACE INTO otp_codes (phone, code, expires_at) VALUES (?, ?, ?)", (clean_p, str(code).strip(), expires_at))
+    conn.commit()
+    conn.close()
+
+def verify_otp(phone, code):
+    clean_p = re.sub(r'\D', '', phone)
+    now = int(time.time())
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT code, expires_at FROM otp_codes WHERE phone = ?", (clean_p,))
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        return False
+    if row["expires_at"] < now:
+        return False
+    return str(row["code"]).strip() == str(code).strip()
