@@ -1,0 +1,37 @@
+{
+  "1838588800": {
+    "chat_id": 1838588800,
+    "first_name": "Ahror",
+    "username": "axrorbek_o5",
+    "registered_at": "2026-10-13 09:57:40",
+    "phone_verified": true,
+    "status": "verified",
+    "phone": "+998 (94) 040-10-09",
+    "raw_phone": "998940401009",
+    "address": {
+      "region": "qashqadaryo",
+      "district": "nishon",
+      "mfy": "yangi_nishon",
+      "street": "istiqlol",
+      "street_label": "Qashqadaryo viloyati, Nishon tumani, «Yangi Nishon» MFY, Istiqlol ko‘chasi"
+    },
+    "address_text": "Buxoro viloyati, Buxoro shahri, «Somoniylar» MFY, Bahouddin Naqshband ko‘chasi, 35-uy"
+  },
+  "8798435864": {
+    "chat_id": 8798435864,
+    "first_name": "Azimchik",
+    "username": "Azimchik_02",
+    "registered_at": "2026-10-13 10:21:02",
+    "phone_verified": true,
+    "status": "verified",
+    "phone": "+998 (93) 123-45-67",
+    "raw_phone": "998931234567",
+    "address": {
+      "region": "buxoro",
+      "district": "buxoro_sh",
+      "mfy": "somoniylar",
+      "street": "naqshband",
+      "street_label": "Buxoro viloyati, Buxoro shahri, «Somoniylar» MFY, Bahouddin Naqshband ko‘chasi"
+    }
+  }
+}

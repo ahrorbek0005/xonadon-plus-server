@@ -1,0 +1,3 @@
+# Python standard library handles HTTP, SQLite, and JSON.
+# Additional lightweight packages for cloud reliability:
+urllib3>=2.0.0
