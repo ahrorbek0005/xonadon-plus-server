@@ -2545,10 +2545,20 @@ def get_otp_keyboard():
         "resize_keyboard": True
     }
 
-def get_main_keyboard():
+def get_main_keyboard(chat_id=None):
+    addr_btn_text = "📍 Manzilimni biriktirish"
+    if chat_id is not None:
+        try:
+            subs = load_subscribers()
+            u = subs.get(str(chat_id), {})
+            if u.get("address_text") or (u.get("address") and u.get("address", {}).get("street_label")):
+                addr_btn_text = "✏️ Manzilni o‘zgartirish"
+        except Exception:
+            pass
+
     return {
         "keyboard": [
-            [{"text": "📍 Manzilimni biriktirish"}, {"text": "🚚 Gaz mashinasi qayerda?"}],
+            [{"text": addr_btn_text}, {"text": "🚚 Gaz mashinasi qayerda?"}],
             [{"text": "💳 Balon uchun to‘lov"}, {"text": "🛡️ Xavfsizlik qoidalari"}],
             [{"text": "👤 Profilim va Telefon raqam"}]
         ],
@@ -2858,7 +2868,7 @@ def handle_start(chat_id, user_info):
         f"ushbu Telegramingizga <b>avtomatik ovozli bildirishnoma</b> yetib keladi.\n\n"
         f"Quyidagi menyudan kerakli bo‘limni tanlang 👇"
     )
-    send_message(chat_id, welcome_text, reply_markup=get_main_keyboard(), parse_mode="HTML")
+    send_message(chat_id, welcome_text, reply_markup=get_main_keyboard(chat_id), parse_mode="HTML")
 
 def handle_message(msg):
     chat_id = msg["chat"]["id"]
@@ -2899,20 +2909,18 @@ def handle_message(msg):
             user_sub["raw_phone"] = digits
             user_sub["phone"] = formatted
             user_sub["phone_verified"] = True
-            user_sub["status"] = "verified"
+            user_sub["status"] = "awaiting_address"
             user_sub["phone_verified_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
             save_subscribers(subs)
 
             conf_text = (
                 f"🎉 <b>TABRIKLAYMIZ! TELEFONINGIZ TASDIQLANDI!</b>\n\n"
                 f"📱 <b>Telefon raqam:</b> <code>{formatted}</code> ✅\n"
-                f"🛡️ <b>Tasdiqlash usuli:</b> Telegram rasmiy kontakti (Haqiqiy egasi tasdiqlandi)\n"
-                f"🔗 <b>Xonadon+ hisobi bilan bog‘landi:</b> Ha (Faol ✅)\n\n"
-                f"📍 <b>Biriktirilgan manzil:</b>\n<i>{safe_html(user_sub['address']['street_label'])}</i>\n\n"
-                f"🔔 Endi Isuzu gaz mashinasi ko‘changizga kirishi bilan sizga avtomatik bildirishnoma keladi.\n\n"
-                f"Quyidagi menyudan foydalanishingiz mumkin 👇"
+                f"🛡️ <b>Tasdiqlash usuli:</b> Telegram rasmiy kontakti\n\n"
+                f"📍 <b>Endi yashash manzilingizni tanlang:</b>\n"
+                f"<i>Tizimda xatoliklar bo‘lmasligi uchun viloyat, tuman, mahalla va ko‘changizni pastdagi tugmalar orqali ketma-ket tanlang:</i>"
             )
-            send_message(chat_id, conf_text, reply_markup=get_main_keyboard(), parse_mode="HTML")
+            send_message(chat_id, conf_text, reply_markup=get_region_keyboard(), parse_mode="HTML")
             return
         elif digits:
             # Agar boshqa odamning kontakti uzatilgan bo'lsa -> SMS kod talab qilinadi
@@ -3069,15 +3077,25 @@ def handle_message(msg):
             if not drivers:
                 send_message(chat_id, "Hozircha tizimda haydovchilar yo‘q.")
                 return
-            d_list_text = "📋 <b>TIZIMDAGI HAYDOVCHILAR:</b>\n\n"
+            send_message(chat_id, "📋 <b>TIZIMDAGI HAYDOVCHILAR:</b>\n<i>O‘chirish uchun kerakli haydovchi ostidagi tugmani bosing:</i>", parse_mode="HTML")
             for d in drivers:
-                d_list_text += (
-                    f"• <b>{d['full_name']}</b>\n"
-                    f"  📱 Tel/Login: <code>{d['phone']}</code> | Parol: <code>{d['password']}</code>\n"
-                    f"  🚛 Mashina: <b>{d['truck_plate']}</b> ({d.get('truck_model', 'Isuzu')})\n"
-                    f"  📍 MFY: {d.get('assigned_mfy', 'koksoy')}\n\n"
+                d_phone = d.get('phone', '')
+                d_name = d.get('full_name', '')
+                d_plate = d.get('truck_plate', '')
+                d_model = d.get('truck_model', 'Isuzu NPR 75')
+                d_pass = d.get('password', '')
+
+                d_item = (
+                    f"• <b>{safe_html(d_name)}</b>\n"
+                    f"  📱 Tel/Login: <code>{safe_html(d_phone)}</code> | Parol: <code>{safe_html(d_pass)}</code>\n"
+                    f"  🚛 Mashina: <b>{safe_html(d_plate)}</b> ({safe_html(d_model)})"
                 )
-            send_message(chat_id, d_list_text, parse_mode="HTML")
+                inline_del = {
+                    "inline_keyboard": [
+                        [{"text": f"❌ {safe_html(d_name)} ({d_plate}) ni o‘chirish", "callback_data": f"deldriver_{d_phone}"}]
+                    ]
+                }
+                send_message(chat_id, d_item, reply_markup=inline_del, parse_mode="HTML")
             return
 
         elif text == "👥 Fuqarolar statistikasi" or text == "/users":
@@ -3102,7 +3120,7 @@ def handle_message(msg):
         elif text == "⬅️ Asosiy menyuga qaytish" or text == "/exit_admin":
             user_sub.pop("admin_state", None)
             save_subscribers(subs)
-            send_message(chat_id, "Asosiy menyuga qaytdingiz.", reply_markup=get_main_keyboard())
+            send_message(chat_id, "Asosiy menyuga qaytdingiz.", reply_markup=get_main_keyboard(chat_id))
             return
 
     # /start komandasi
@@ -3145,7 +3163,7 @@ def handle_message(msg):
                 f"🔔 Endi Isuzu gaz mashinasi ko‘changizga kirishi bilan sizga Telegram orqali avtomatik bildirishnoma yetib keladi.\n\n"
                 f"Quyidagi menyudan foydalanishingiz mumkin 👇"
             )
-            send_message(chat_id, conf_text, reply_markup=get_main_keyboard(), parse_mode="HTML")
+            send_message(chat_id, conf_text, reply_markup=get_main_keyboard(chat_id), parse_mode="HTML")
             return
         else:
             send_message(
@@ -3189,12 +3207,25 @@ def handle_message(msg):
 
     # 4. TASDIQLANGAN FOYDALANUVCHILAR UCHUN MENYU KOMANDALARI
 
-    # Manzilni biriktirish
-    if text == "📍 Manzilimni biriktirish" or text == "/manzil":
+    # Agar foydalanuvchi manzil tanlash bosqichida matn yozsa -> Faqat tugmalardan tanlashini so'raymiz
+    if user_sub.get("status") == "awaiting_address" and text and not text.startswith("/") and not text.startswith("⬅️"):
+        warn_msg = (
+            "⚠️ <b>Manzil faqat bot tugmalari orqali tanlanadi!</b>\n\n"
+            "Tizimda yo‘q manzillar kiritilishi va gaz yetkazib berishda xatoliklar kelib chiqishining oldini olish uchun, "
+            "iltimos, viloyat, tuman, mahalla va ko‘changizni <b>pastdagi tugmalar</b> orqali ketma-ket tanlang 👇"
+        )
+        send_message(chat_id, warn_msg, reply_markup=get_region_keyboard(), parse_mode="HTML")
+        return
+
+    # Manzilni biriktirish / Manzilni o'zgartirish (Faqat tugmalar orqali ketma-ket tanlash)
+    if text in ["📍 Manzilimni biriktirish", "✏️ Manzilni o‘zgartirish", "/manzil"]:
+        user_sub["status"] = "awaiting_address"
+        save_subscribers(subs)
+        curr_addr = user_sub.get("address_text") or user_sub.get("address", {}).get("street_label", "")
+        curr_info = f"\n\n📌 <b>Amaldagi manzil:</b> <i>{safe_html(curr_addr)}</i>" if curr_addr else ""
         prompt = (
-            "📍 <b>Xonadon manzilingizni tanlang</b>\n\n"
-            "Gaz mashinasi aynan sizning ko‘changizga yetib kelganda ogohlantirish olishingiz uchun "
-            "viloyat va tumaningizni belgilang:"
+            f"📍 <b>Xonadon manzilingizni tanlang:</b>{curr_info}\n\n"
+            f"Tizimdagi aniq manzilingizni belgilash uchun, avval <b>viloyatingizni</b> tanlang:"
         )
         send_message(chat_id, prompt, reply_markup=get_region_keyboard(), parse_mode="HTML")
         return
@@ -3319,7 +3350,7 @@ def handle_message(msg):
     send_message(
         chat_id,
         "Iltimos, quyidagi menyudan kerakli bo‘limni tanlang 👇",
-        reply_markup=get_main_keyboard(),
+        reply_markup=get_main_keyboard(chat_id),
         parse_mode="HTML"
     )
 
@@ -3334,6 +3365,78 @@ def handle_callback(cb):
     msg_id = msg.get("message_id")
 
     answer_callback(cb_id)
+
+    # --- HAYDOVCHINI O'CHIRISH CALLBACKLARI ---
+    if data.startswith("deldriver_"):
+        phone_to_del = data.split("deldriver_")[1].strip()
+        confirm_text = (
+            f"⚠️ <b>HAYDOVCHINI O‘CHIRISHNI TASDIQLANG:</b>\n\n"
+            f"📱 <b>Telefon/Login:</b> <code>{safe_html(phone_to_del)}</code>\n\n"
+            f"Haqiqatan ham ushbu haydovchini tizimdan butunlay o‘chirib tashlamoqchimisiz?\n"
+            f"<i>(O‘chirilgach, ushbu haydovchi qaytib ilovaga kira olmaydi)</i>"
+        )
+        inline_confirm = {
+            "inline_keyboard": [
+                [{"text": "🗑 Ha, butunlay o‘chirish", "callback_data": f"confdel_{phone_to_del}"}],
+                [{"text": "❌ Bekor qilish", "callback_data": "cancel_del"}]
+            ]
+        }
+        send_message(chat_id, confirm_text, reply_markup=inline_confirm, parse_mode="HTML")
+        return
+
+    if data.startswith("confdel_"):
+        phone_to_del = data.split("confdel_")[1].strip()
+        db_manager.delete_driver(phone_to_del)
+        edit_message_text(
+            chat_id, msg_id,
+            f"✅ <b>Haydovchi ({safe_html(phone_to_del)}) tizimdan butunlay o‘chirildi!</b>\nUning hisobi va kirish ruxsatnomasi bekor qilindi.",
+            parse_mode="HTML"
+        )
+        return
+
+    if data == "cancel_del":
+        edit_message_text(
+            chat_id, msg_id,
+            "❌ <b>Haydovchini o‘chirish bekor qilindi.</b>",
+            parse_mode="HTML"
+        )
+        return
+
+    # --- HAYDOVCHINI O'CHIRISH CALLBACKLARI ---
+    if data.startswith("deldriver_"):
+        phone_to_del = data.split("deldriver_")[1].strip()
+        confirm_text = (
+            f"⚠️ <b>HAYDOVCHINI O‘CHIRISHNI TASDIQLANG:</b>\n\n"
+            f"📱 <b>Telefon/Login:</b> <code>{safe_html(phone_to_del)}</code>\n\n"
+            f"Haqiqatan ham ushbu haydovchini tizimdan butunlay o‘chirib tashlamoqchimisiz?\n"
+            f"<i>(O‘chirilgach, ushbu haydovchi qaytib ilovaga kira olmaydi)</i>"
+        )
+        inline_confirm = {
+            "inline_keyboard": [
+                [{"text": "🗑 Ha, butunlay o‘chirish", "callback_data": f"confdel_{phone_to_del}"}],
+                [{"text": "❌ Bekor qilish", "callback_data": "cancel_del"}]
+            ]
+        }
+        send_message(chat_id, confirm_text, reply_markup=inline_confirm, parse_mode="HTML")
+        return
+
+    if data.startswith("confdel_"):
+        phone_to_del = data.split("confdel_")[1].strip()
+        db_manager.delete_driver(phone_to_del)
+        edit_message_text(
+            chat_id, msg_id,
+            f"✅ <b>Haydovchi ({safe_html(phone_to_del)}) tizimdan butunlay o‘chirildi!</b>\nUning hisobi va kirish ruxsatnomasi bekor qilindi.",
+            parse_mode="HTML"
+        )
+        return
+
+    if data == "cancel_del":
+        edit_message_text(
+            chat_id, msg_id,
+            "❌ <b>Haydovchini o‘chirish bekor qilindi.</b>",
+            parse_mode="HTML"
+        )
+        return
 
     # Telefon raqamni o'zgartirish
     if data == "change_phone":
@@ -3433,6 +3536,7 @@ def handle_callback(cb):
             f"Rahmat! Siz Xonadon+ tizimiga muvaffaqiyatli ulandingiz."
         )
         edit_message_text(chat_id, msg_id, success_text, parse_mode="HTML")
+        send_message(chat_id, "Asosiy menyuga xush kelibsiz! Kerakli xizmatni tanlang:", reply_markup=get_main_keyboard(chat_id))
         return
 
     if data == "pay_lpg_now":
@@ -3558,7 +3662,7 @@ class AlertApiHandler(BaseHTTPRequestHandler):
 
                 msg = (
                     "🔐 <b>Xonadon+ 2FA Parolini Tiklash</b>\n\n"
-                    "Ikki bosqichli maxfiy parolingizni tiklash uchun maxsus 6 xonali kodingiz:\n"
+                    "Ikki bosqichli maxfiy parolingizni tiklash uchun 6 xonali maxsus kodingiz:\n"
                     f"🔑 <code>{recovery_code}</code>\n\n"
                     "⚠️ <i>Xavfsizlik eslatmasi: Ushbu kodni hech kimga bermang! Kod 10 daqiqa davomida amal qiladi.</i>"
                 )
@@ -3570,7 +3674,7 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(json.dumps({
                     "ok": True,
-                    "message": "Maxsus 6 xonali tiklash kodi Telegram botingizga yuborildi!"
+                    "message": "Maxsus 4 xonali tiklash kodi Telegram botingizga yuborildi!"
                 }).encode("utf-8"))
             except Exception as e:
                 self.send_response(500)
@@ -3620,6 +3724,38 @@ class AlertApiHandler(BaseHTTPRequestHandler):
 
 
         # --- API: SEND SMS CODE DIRECTLY TO LINKED TELEGRAM BOT CHAT ---
+                # Check if phone number is already registered
+        if self.path.startswith("/api/auth/check-user"):
+            try:
+                import urllib.parse
+                qs = urllib.parse.urlparse(self.path).query
+                params = urllib.parse.parse_qs(qs)
+                phone = params.get("phone", [""])[0]
+                raw_p = re.sub(r'\D', '', phone)
+                last9 = raw_p[-9:] if len(raw_p) >= 9 else raw_p
+
+                conn = db_manager.get_connection()
+                c = conn.cursor()
+                c.execute("SELECT * FROM users WHERE phone LIKE ?", (f"%{last9}%",))
+                u = c.fetchone()
+                if not u:
+                    c.execute("SELECT * FROM drivers WHERE phone LIKE ?", (f"%{last9}%",))
+                    u = c.fetchone()
+                conn.close()
+
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": True, "exists": bool(u)}).encode("utf-8"))
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
+            return
+
         if self.path == "/api/auth/send-sms-code":
             try:
                 import random
@@ -3642,7 +3778,6 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 if action == "login":
                     user = db_manager.get_user_by_phone(f"+{raw_phone}") or db_manager.get_user_by_phone(raw_phone)
                     if not user:
-                        # Check last 9 digits in users table
                         conn = db_manager.get_connection()
                         c = conn.cursor()
                         c.execute("SELECT * FROM users WHERE phone LIKE ?", (f"%{raw_phone[-9:]}%",))
@@ -3658,6 +3793,29 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                             "ok": False,
                             "not_registered": True,
                             "message": "❌ Bu telefon raqam tizimda ro‘yxatdan o‘tmagan! Iltimos, avval «Ro‘yxatdan o‘tish» bo‘limiga o‘ting."
+                        }).encode("utf-8"))
+                        return
+                
+                # If action is register, prevent registering an already registered phone
+                elif action == "register":
+                    conn = db_manager.get_connection()
+                    c = conn.cursor()
+                    c.execute("SELECT * FROM users WHERE phone LIKE ?", (f"%{raw_phone[-9:]}%",))
+                    existing_user = c.fetchone()
+                    if not existing_user:
+                        c.execute("SELECT * FROM drivers WHERE phone LIKE ?", (f"%{raw_phone[-9:]}%",))
+                        existing_user = c.fetchone()
+                    conn.close()
+
+                    if existing_user:
+                        self.send_response(200)
+                        self.send_header("Content-Type", "application/json")
+                        self.send_header("Access-Control-Allow-Origin", "*")
+                        self.end_headers()
+                        self.wfile.write(json.dumps({
+                            "ok": False,
+                            "already_registered": True,
+                            "message": "❌ Ushbu telefon raqam allaqachon ro‘yxatdan o‘tgan! Iltimos, «Kirish» bo‘limiga o‘ting."
                         }).encode("utf-8"))
                         return
 
