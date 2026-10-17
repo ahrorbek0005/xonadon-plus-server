@@ -3911,14 +3911,26 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                             elif matched["password"] != password:
                                 resp = {"ok": False, "message": "❌ Parol noto‘g‘ri! Administrator bergan parolni kiriting."}
                             else:
-                                resp = {"ok": True, "user": dict(matched)}
+                                status_2fa = db_manager.get_user_2fa_status(matched["phone"])
+                                resp = {
+                                    "ok": True,
+                                    "user": dict(matched),
+                                    "require_2fa": status_2fa.get("has_2fa", False),
+                                    "hint": status_2fa.get("hint", "")
+                                }
                         else:
                             # If no plate provided, check first driver password
                             d = drivers[0]
                             if d["password"] != password:
                                 resp = {"ok": False, "message": "❌ Parol noto‘g‘ri! Administrator bergan parolni kiriting."}
                             else:
-                                resp = {"ok": True, "user": dict(d)}
+                                status_2fa = db_manager.get_user_2fa_status(d["phone"])
+                                resp = {
+                                    "ok": True,
+                                    "user": dict(d),
+                                    "require_2fa": status_2fa.get("has_2fa", False),
+                                    "hint": status_2fa.get("hint", "")
+                                }
                 else:
                     user = db_manager.get_user_by_phone(phone)
                     if not user:

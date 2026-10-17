@@ -328,34 +328,78 @@ def is_bot_admin(chat_id):
 
 # --- TWO-STEP VERIFICATION (2FA - TELEGRAM USLUBIDA KALIT SO'Z) ---
 def set_user_2fa(phone, password, hint=""):
+    clean_p = re.sub(r'\D', '', phone)
+    last9 = clean_p[-9:] if len(clean_p) >= 9 else clean_p
     conn = get_connection()
     c = conn.cursor()
-    c.execute("""
-    UPDATE users SET two_step_password = ?, two_step_hint = ? WHERE phone = ?
-    """, (password.strip(), hint.strip(), phone.strip()))
+    # Ensure drivers table has columns
+    try:
+        c.execute("ALTER TABLE drivers ADD COLUMN two_step_password TEXT")
+    except Exception:
+        pass
+    try:
+        c.execute("ALTER TABLE drivers ADD COLUMN two_step_hint TEXT")
+    except Exception:
+        pass
+    
+    # Update users
+    c.execute("SELECT id FROM users WHERE phone LIKE ?", (f"%{last9}%",))
+    u = c.fetchone()
+    if u:
+        c.execute("UPDATE users SET two_step_password = ?, two_step_hint = ? WHERE phone LIKE ?", 
+                  (password.strip(), hint.strip(), f"%{last9}%"))
+    else:
+        c.execute("INSERT INTO users (phone, full_name, role, two_step_password, two_step_hint) VALUES (?, ?, 'driver', ?, ?)",
+                  (f"+998{last9}", "Haydovchi", password.strip(), hint.strip()))
+    
+    # Also update drivers table
+    try:
+        c.execute("UPDATE drivers SET two_step_password = ?, two_step_hint = ? WHERE phone LIKE ?",
+                  (password.strip(), hint.strip(), f"%{last9}%"))
+    except Exception:
+        pass
     conn.commit()
     conn.close()
     return {"ok": True, "message": "Ikki bosqichli kalit so‘z muvaffaqiyatli saqlandi!"}
 
 def get_user_2fa_status(phone):
+    clean_p = re.sub(r'\D', '', phone)
+    last9 = clean_p[-9:] if len(clean_p) >= 9 else clean_p
     conn = get_connection()
     c = conn.cursor()
-    c.execute("SELECT two_step_password, two_step_hint FROM users WHERE phone = ?", (phone.strip(),))
+    c.execute("SELECT two_step_password, two_step_hint FROM users WHERE phone LIKE ?", (f"%{last9}%",))
     row = c.fetchone()
+    if not row or not row["two_step_password"]:
+        try:
+            c.execute("SELECT two_step_password, two_step_hint FROM drivers WHERE phone LIKE ?", (f"%{last9}%",))
+            row = c.fetchone()
+        except Exception:
+            pass
     conn.close()
     if row and row["two_step_password"]:
         return {"has_2fa": True, "hint": row["two_step_hint"] or ""}
     return {"has_2fa": False, "hint": ""}
 
 def verify_user_2fa(phone, password):
+    clean_p = re.sub(r'\D', '', phone)
+    last9 = clean_p[-9:] if len(clean_p) >= 9 else clean_p
+    status = get_user_2fa_status(phone)
+    if not status.get("has_2fa"):
+        return True
     conn = get_connection()
     c = conn.cursor()
-    c.execute("SELECT two_step_password FROM users WHERE phone = ?", (phone.strip(),))
+    c.execute("SELECT two_step_password FROM users WHERE phone LIKE ?", (f"%{last9}%",))
     row = c.fetchone()
+    if not row or not row["two_step_password"]:
+        try:
+            c.execute("SELECT two_step_password FROM drivers WHERE phone LIKE ?", (f"%{last9}%",))
+            row = c.fetchone()
+        except Exception:
+            pass
     conn.close()
     if not row or not row["two_step_password"]:
-        return True # 2FA not set
-    return row["two_step_password"] == password.strip()
+        return True
+    return str(row["two_step_password"]).strip() == str(password).strip()
 
 def get_all_bot_admins():
     conn = get_connection()
