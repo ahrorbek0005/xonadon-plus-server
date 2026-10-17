@@ -116,12 +116,14 @@ def init_db():
         cursor.execute("""
         INSERT INTO drivers (phone, full_name, truck_model, truck_plate, truck_color, assigned_region, assigned_district, assigned_mfy, password)
         VALUES 
-        ('+998901234567', 'Islomov Javohir', 'Isuzu NPR 75', '30 782 AGA', 'Oq (Sariq chiziqli)', 'qashqadaryo', 'nishon', 'koksoy', 'gaz2026');
+        ('+998901234567', 'Islomov Javohir', 'Isuzu NPR 75', '30 782 AGA', 'Oq (Sariq chiziqli)', 'qashqadaryo', 'nishon', 'koksoy', 'gaz2026'),
+        ('+998940401009', 'Ahror Suyunov', 'Isuzu NPR 75', '70 M 260 EB', 'Oq (Sariq chiziqli)', 'qashqadaryo', 'nishon', 'koksoy', 'ahrorbek2005');
         """)
         cursor.execute("""
         INSERT OR REPLACE INTO driver_live (phone, driver_name, truck_plate, truck_model, truck_color, status, stage, lat, lng, region, district, mfy, street, street_name)
         VALUES 
-        ('+998901234567', 'Islomov Javohir', '30 782 AGA', 'Isuzu NPR 75', 'Oq (Sariq chiziqli)', 'working', 'collect', 38.665, 65.698, 'qashqadaryo', 'nishon', 'koksoy', 'koksoy_markaziy', 'Ko‘ksoy markaziy ko‘chasi');
+        ('+998901234567', 'Islomov Javohir', '30 782 AGA', 'Isuzu NPR 75', 'Oq (Sariq chiziqli)', 'working', 'collect', 38.665, 65.698, 'qashqadaryo', 'nishon', 'koksoy', 'koksoy_markaziy', 'Ko‘ksoy markaziy ko‘chasi'),
+        ('+998940401009', 'Ahror Suyunov', '70 M 260 EB', 'Isuzu NPR 75', 'Oq (Sariq chiziqli)', 'working', 'collect', 38.665, 65.698, 'qashqadaryo', 'nishon', 'koksoy', 'koksoy_markaziy', 'Ko‘ksoy markaziy ko‘chasi');
         """)
 
     conn.commit()

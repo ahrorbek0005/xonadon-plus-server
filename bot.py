@@ -2754,20 +2754,31 @@ def broadcast_street_alert(street_key, reg_key="qashqadaryo", dist_key="nishon",
         u_street = user_addr.get("street", "")
         u_label = (user_addr.get("street_label") or "").lower()
 
-        # 1. Aniq kalitlar bo'yicha moslik tekshiruvi:
+        # Aniq manzil bo'yicha moslik tekshiruvi:
         is_match = False
-        if u_street and street_key and (u_street == street_key):
-            if u_mfy and mfy_key:
-                if u_mfy == mfy_key:
-                    is_match = True
-            else:
+
+        norm_target_street = (street_key or "").lower().strip()
+        norm_user_street = (u_street or "").lower().strip()
+        norm_target_mfy = (mfy_key or "").lower().strip()
+        norm_user_mfy = (u_mfy or "").lower().strip()
+        norm_target_dist = (dist_key or "").lower().strip()
+        norm_user_dist = (u_dist or "").lower().strip()
+
+        # 1. Kalitlar bo'yicha qat'iy tekshiruv:
+        if norm_target_street and norm_user_street and (norm_target_street == norm_user_street):
+            # MFY va Tuman ham mos kelishi shart (agar ko'rsatilgan bo'lsa)
+            mfy_ok = (not norm_target_mfy or not norm_user_mfy or norm_target_mfy == norm_user_mfy)
+            dist_ok = (not norm_target_dist or not norm_user_dist or norm_target_dist == norm_user_dist)
+            if mfy_ok and dist_ok:
                 is_match = True
 
-        # 2. Matnli nom bo'yicha qo'shimcha moslik tekshiruvi:
+        # 2. Matnli ko'cha nomi bo'yicha tekshiruv (agar kalit to'liq mos kelmagan bo'lsa):
         if not is_match and street_name:
-            st_clean = street_name.lower().replace(" ko‘chasi", "").replace(" ko'chasi", "").replace(" kochasi", "").strip()
+            st_clean = street_name.lower().replace("ko‘chasi", "").replace("ko'chasi", "").replace("kochasi", "").strip()
             if st_clean and st_clean in u_label:
-                is_match = True
+                mfy_clean = (mfy_name or "").lower().replace("mfy", "").replace("«", "").replace("»", "").strip()
+                if not mfy_clean or mfy_clean in u_label:
+                    is_match = True
 
         # Agar fuqaro ayni shu ko'chada yashasa -> Xabar yetkaziladi
         if is_match:
@@ -2780,19 +2791,10 @@ def broadcast_street_alert(street_key, reg_key="qashqadaryo", dist_key="nishon",
             except Exception as e:
                 print(f"[BOT] Xabar yuborishda xatolik ({cid_str}):", e)
 
-    if sent_count == 0 and subs:
-        print(f"[BOT] Aniq ko'chada obunachi topilmadi. Barcha {len(subs)} ta obunachiga yetkazilmoqda...")
-        for cid_str, udata in subs.items():
-            try:
-                cid = int(cid_str)
-                res = send_message(cid, alert_text, reply_markup=action_keyboard, parse_mode="HTML")
-                if res and res.get("ok"):
-                    sent_count += 1
-                time.sleep(0.04)
-            except Exception as e:
-                print(f"[BOT] Fallback yuborishda xatolik ({cid_str}):", e)
-
-    print(f"[BOT] Aniq manzil filtri: «{full_address}» ko‘chasi bo‘yicha {sent_count} ta fuqaroga xabar yetkazildi.")
+    if sent_count == 0:
+        print(f"[BOT] «{full_address}» ko‘chasi bo‘yicha hozircha botda fuqaro topilmadi. Boshqa ko‘chadagilarga xabar yuborilmadi.")
+    else:
+        print(f"[BOT] Aniq manzil filtri: «{full_address}» ko‘chasi bo‘yicha {sent_count} ta fuqaroga xabar yetkazildi.")
     return sent_count
 
 # ========================================================
