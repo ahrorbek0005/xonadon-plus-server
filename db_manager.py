@@ -1,3 +1,4 @@
+import random
 import sqlite3
 import os
 import time
@@ -128,10 +129,45 @@ def init_db():
         ('+998940401009', 'Ahror Suyunov', '70 M 260 EB', 'Isuzu NPR 75', 'Oq (Sariq chiziqli)', 'working', 'collect', 38.665, 65.698, 'qashqadaryo', 'nishon', 'koksoy', 'koksoy_markaziy', 'Ko‘ksoy markaziy ko‘chasi');
         """)
 
+    # Ensure account_id columns exist for both users and drivers
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN account_id TEXT;")
+    except Exception:
+        pass
+    try:
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_account_id ON users(account_id);")
+    except Exception:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE drivers ADD COLUMN account_id TEXT;")
+    except Exception:
+        pass
+    try:
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_drivers_account_id ON drivers(account_id);")
+    except Exception:
+        pass
+
     conn.commit()
     conn.close()
     print("Database initialized successfully at:", DB_PATH)
 
+
+
+def generate_unique_account_id(prefix="XP-"):
+    conn = get_connection()
+    c = conn.cursor()
+    for _ in range(1000):
+        rand_num = random.randint(100000, 999999)
+        candidate = f"{prefix}{rand_num}"
+        c.execute("SELECT 1 FROM users WHERE account_id = ?", (candidate,))
+        if not c.fetchone():
+            c.execute("SELECT 1 FROM drivers WHERE account_id = ?", (candidate,))
+            if not c.fetchone():
+                conn.close()
+                return candidate
+    conn.close()
+    return f"{prefix}{int(time.time() * 1000) % 1000000:06d}"
 
 # --- USER FUNCTIONS ---
 def register_user(phone, full_name, role='resident', region='qashqadaryo', district='nishon', mfy='koksoy', street='koksoy_markaziy', house_number='1-uy'):
@@ -142,13 +178,20 @@ def register_user(phone, full_name, role='resident', region='qashqadaryo', distr
     c.execute("SELECT * FROM users WHERE phone = ?", (clean_p,))
     row = c.fetchone()
     if row:
+        u_dict = dict(row)
+        if not u_dict.get("account_id"):
+            acc_id = generate_unique_account_id("XP-")
+            c.execute("UPDATE users SET account_id = ? WHERE phone = ?", (acc_id, clean_p))
+            conn.commit()
+            u_dict["account_id"] = acc_id
         conn.close()
-        return {"ok": False, "exists": True, "message": "Ushbu telefon raqam allaqachon ro‘yxatdan o‘tgan!"}
+        return {"ok": True, "exists": True, "user": u_dict}
 
+    account_id = generate_unique_account_id("XP-")
     c.execute("""
-    INSERT INTO users (phone, full_name, role, region, district, mfy, street, house_number)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, (clean_p, full_name, role, region, district, mfy, street, house_number))
+    INSERT INTO users (phone, full_name, role, region, district, mfy, street, house_number, account_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (clean_p, full_name, role, region, district, mfy, street, house_number, account_id))
     conn.commit()
     user_id = c.lastrowid
     conn.close()
@@ -156,6 +199,7 @@ def register_user(phone, full_name, role='resident', region='qashqadaryo', distr
         "ok": True,
         "user": {
             "id": user_id,
+            "account_id": account_id,
             "phone": clean_p,
             "full_name": full_name,
             "role": role,
@@ -172,8 +216,21 @@ def get_user_by_phone(phone):
     c = conn.cursor()
     c.execute("SELECT * FROM users WHERE phone = ?", (phone.strip(),))
     row = c.fetchone()
+    if not row:
+        clean_p = re.sub(r'\D', '', phone)
+        c.execute("SELECT * FROM users WHERE phone LIKE ?", (f"%{clean_p[-9:]}%",))
+        row = c.fetchone()
+    if not row:
+        conn.close()
+        return None
+    user_dict = dict(row)
+    if not user_dict.get("account_id"):
+        acc_id = generate_unique_account_id("XP-")
+        c.execute("UPDATE users SET account_id = ? WHERE id = ?", (acc_id, user_dict["id"]))
+        conn.commit()
+        user_dict["account_id"] = acc_id
     conn.close()
-    return dict(row) if row else None
+    return user_dict
 
 
 # --- DRIVER FUNCTIONS ---
@@ -181,16 +238,20 @@ def add_driver(phone, full_name, truck_plate, password='gaz2026', truck_model='I
     clean_p = phone.strip()
     conn = get_connection()
     c = conn.cursor()
+    c.execute("SELECT account_id FROM drivers WHERE phone = ?", (clean_p,))
+    row = c.fetchone()
+    account_id = row["account_id"] if row and row["account_id"] else generate_unique_account_id("XP-")
+
     c.execute("""
-    INSERT OR REPLACE INTO drivers (phone, full_name, truck_model, truck_plate, truck_color, assigned_region, assigned_district, assigned_mfy, password, is_active)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-    """, (clean_p, full_name, truck_model, truck_plate, truck_color, assigned_region, assigned_district, assigned_mfy, password))
+    INSERT OR REPLACE INTO drivers (phone, full_name, truck_model, truck_plate, truck_color, assigned_region, assigned_district, assigned_mfy, password, account_id, is_active)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+    """, (clean_p, full_name, truck_model, truck_plate, truck_color, assigned_region, assigned_district, assigned_mfy, password, account_id))
     
-    # Also ensure user table has driver role
+    # Also ensure user table has driver role and same account_id
     c.execute("""
-    INSERT OR REPLACE INTO users (phone, full_name, role, region, district, mfy)
-    VALUES (?, ?, 'driver', ?, ?, ?)
-    """, (clean_p, full_name, assigned_region, assigned_district, assigned_mfy))
+    INSERT OR REPLACE INTO users (phone, full_name, role, region, district, mfy, account_id)
+    VALUES (?, ?, 'driver', ?, ?, ?, ?)
+    """, (clean_p, full_name, assigned_region, assigned_district, assigned_mfy, account_id))
 
     # Also register in driver_live
     c.execute("""
@@ -200,7 +261,7 @@ def add_driver(phone, full_name, truck_plate, password='gaz2026', truck_model='I
 
     conn.commit()
     conn.close()
-    return {"ok": True, "message": f"Haydovchi {full_name} ({truck_plate}) muvaffaqiyatli qo‘shildi!"}
+    return {"ok": True, "account_id": account_id, "message": f"Haydovchi {full_name} ({truck_plate}) muvaffaqiyatli qo‘shildi!"}
 
 def get_driver_by_phone(phone):
     conn = get_connection()
@@ -233,10 +294,11 @@ def update_or_create_session(device_id, phone, device_name, os_name, ip_address=
     conn = get_connection()
     c = conn.cursor()
     now = int(time.time() * 1000)
+    clean_p = re.sub(r'\D', '', str(phone or ''))
     c.execute("""
     INSERT OR REPLACE INTO sessions (id, phone, device_name, os_name, ip_address, last_active_time, is_active)
     VALUES (?, ?, ?, ?, ?, ?, 1)
-    """, (device_id, phone.strip(), device_name, os_name, ip_address, now))
+    """, (device_id, clean_p, device_name, os_name, ip_address, now))
     conn.commit()
     conn.close()
 
@@ -253,7 +315,8 @@ def check_session_active(device_id):
 def get_user_sessions(phone):
     conn = get_connection()
     c = conn.cursor()
-    c.execute("SELECT * FROM sessions WHERE phone = ? AND is_active = 1 ORDER BY last_active_time DESC", (phone.strip(),))
+    clean_p = re.sub(r'\D', '', str(phone or ''))
+    c.execute("SELECT * FROM sessions WHERE (phone = ? OR phone = ?) AND is_active = 1 ORDER BY last_active_time DESC", (clean_p, '+' + clean_p))
     rows = c.fetchall()
     conn.close()
     return [dict(r) for r in rows]
@@ -269,7 +332,8 @@ def terminate_session(device_id):
 def terminate_other_sessions(phone, current_device_id):
     conn = get_connection()
     c = conn.cursor()
-    c.execute("UPDATE sessions SET is_active = 0 WHERE phone = ? AND id != ?", (phone.strip(), current_device_id))
+    clean_p = re.sub(r'\D', '', str(phone or ''))
+    c.execute("UPDATE sessions SET is_active = 0 WHERE (phone = ? OR phone = ?) AND id != ?", (clean_p, '+' + clean_p, current_device_id))
     conn.commit()
     conn.close()
     return True
@@ -438,3 +502,61 @@ def verify_otp(phone, code):
     if row["expires_at"] < now:
         return False
     return str(row["code"]).strip() == str(code).strip()
+
+# --- AVATAR & ACTIVE TRUCKS FUNCTIONS ---
+def save_user_avatar(phone, role, avatar_url):
+    conn = get_connection()
+    c = conn.cursor()
+    clean_p = re.sub(r'\D', '', str(phone or ''))
+    if role == 'driver':
+        c.execute("UPDATE drivers SET avatar_url = ? WHERE phone LIKE ?", (avatar_url, f"%{clean_p[-9:]}%"))
+    else:
+        c.execute("UPDATE users SET avatar_url = ? WHERE phone LIKE ?", (avatar_url, f"%{clean_p[-9:]}%"))
+    conn.commit()
+    conn.close()
+    return True
+
+def get_active_trucks(region=None, district=None, mfy=None):
+    conn = get_connection()
+    c = conn.cursor()
+    
+    # Only select drivers that are actually active in drivers table
+    query = """
+        SELECT d.phone, d.full_name, d.truck_model, d.truck_plate, d.truck_color,
+               d.assigned_region, d.assigned_district, d.assigned_mfy, d.avatar_url,
+               COALESCE(l.lat, 38.685) as lat,
+               COALESCE(l.lng, 65.680) as lng,
+               COALESCE(l.status, 'arrived') as status,
+               COALESCE(l.stage, 'collect') as stage,
+               COALESCE(l.street, 'istiqlol') as street,
+               COALESCE(l.street_name, 'Istiqlol ko‘chasi') as street_name,
+               l.updated_at
+        FROM drivers d
+        LEFT JOIN driver_live l ON d.phone = l.phone
+        WHERE d.is_active = 1
+    """
+    params = []
+    
+    c.execute(query, tuple(params))
+    rows = c.fetchall()
+    conn.close()
+    
+    results = []
+    for r in rows:
+        d_dict = dict(r)
+        
+        # Exclude drivers in waiting or idle mode
+        if d_dict.get('status') in ['waiting', 'idle']:
+            continue
+            
+        # Filter by MFY if requested
+        if mfy and d_dict.get('assigned_mfy') and d_dict['assigned_mfy'].lower() != mfy.lower():
+            continue
+            
+        # Filter by District if requested
+        if district and d_dict.get('assigned_district') and d_dict['assigned_district'].lower() != district.lower():
+            continue
+            
+        results.append(d_dict)
+        
+    return results

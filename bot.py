@@ -2754,7 +2754,7 @@ def broadcast_street_alert(street_key, reg_key="qashqadaryo", dist_key="nishon",
     current_driver_state["last_alert_time"] = now_time
 
     # =========================================================================
-    # ANIQ MANZIL FILTRI: FAQAT HAYDOVCHI KIRGAN KO'CHADA YASHOVCHILARGA YUBORISH
+    # MFY BO'YICHA ANIQ FILTR: BOSHQA TUMAN/MFYGA BORMAYDI, FAQAT SHU MFY AHOLISIGA YETKAZILADI
     # =========================================================================
     for cid_str, udata in subs.items():
         user_addr = udata.get("address", {})
@@ -2764,9 +2764,6 @@ def broadcast_street_alert(street_key, reg_key="qashqadaryo", dist_key="nishon",
         u_street = user_addr.get("street", "")
         u_label = (user_addr.get("street_label") or "").lower()
 
-        # Aniq manzil bo'yicha moslik tekshiruvi:
-        is_match = False
-
         norm_target_street = (street_key or "").lower().strip()
         norm_user_street = (u_street or "").lower().strip()
         norm_target_mfy = (mfy_key or "").lower().strip()
@@ -2774,37 +2771,63 @@ def broadcast_street_alert(street_key, reg_key="qashqadaryo", dist_key="nishon",
         norm_target_dist = (dist_key or "").lower().strip()
         norm_user_dist = (u_dist or "").lower().strip()
 
-        # 1. Kalitlar bo'yicha qat'iy tekshiruv:
-        if norm_target_street and norm_user_street and (norm_target_street == norm_user_street):
-            # MFY va Tuman ham mos kelishi shart (agar ko'rsatilgan bo'lsa)
-            mfy_ok = (not norm_target_mfy or not norm_user_mfy or norm_target_mfy == norm_user_mfy)
+        # 1. Bitta MFY ekanligini qat'iy tekshirish
+        mfy_match = False
+        if norm_target_mfy and norm_user_mfy and (norm_target_mfy == norm_user_mfy):
             dist_ok = (not norm_target_dist or not norm_user_dist or norm_target_dist == norm_user_dist)
-            if mfy_ok and dist_ok:
-                is_match = True
+            if dist_ok:
+                mfy_match = True
+        elif not norm_user_mfy and mfy_name:
+            mfy_clean = mfy_name.lower().replace("mfy", "").replace("«", "").replace("»", "").strip()
+            if mfy_clean and mfy_clean in u_label:
+                mfy_match = True
 
-        # 2. Matnli ko'cha nomi bo'yicha tekshiruv (agar kalit to'liq mos kelmagan bo'lsa):
-        if not is_match and street_name:
+        # Agar fuqaro boshqa MFYda bo'lsa -> Xabar umuman bormaydi!
+        if not mfy_match:
+            continue
+
+        # 2. Fuqaroning o'z ko'chasimi yoki mahalladagi boshqa ko'chami?
+        is_user_street = False
+        if norm_target_street and norm_user_street and (norm_target_street == norm_user_street):
+            is_user_street = True
+        elif street_name:
             st_clean = street_name.lower().replace("ko‘chasi", "").replace("ko'chasi", "").replace("kochasi", "").strip()
             if st_clean and st_clean in u_label:
-                mfy_clean = (mfy_name or "").lower().replace("mfy", "").replace("«", "").replace("»", "").strip()
-                if not mfy_clean or mfy_clean in u_label:
-                    is_match = True
+                is_user_street = True
 
-        # Agar fuqaro ayni shu ko'chada yashasa -> Xabar yetkaziladi
-        if is_match:
-            try:
-                cid = int(cid_str)
-                res = send_message(cid, alert_text, reply_markup=action_keyboard, parse_mode="HTML")
-                if res and res.get("ok"):
-                    sent_count += 1
-                time.sleep(0.04)
-            except Exception as e:
-                print(f"[BOT] Xabar yuborishda xatolik ({cid_str}):", e)
+        # Mos xabar matnini tanlash
+        if is_user_street:
+            msg_to_send = alert_text
+        else:
+            msg_to_send = (
+                f"📢 <b>DIQQAT! GAZ MASHINASI MAHALLANGIZDAGI «{safe_html(street_name)}» KO‘CHASIGA KIRDI!</b>\n\n"
+                f"📍 <b>Hozirgi xizmat manzili:</b> <b>{safe_html(full_address)}</b>\n"
+                f"🏠 <i>Sizning ko‘changiz: {safe_html(user_addr.get('street_label', 'Mahallangiz'))}</i>\n"
+                f"⏳ <i>Mashina navbat bilan sizning ko‘changizga ham yetib keladi.</i>\n\n"
+                f"📌 <b>Harakat bosqichi:</b>\n👉 <b>{safe_html(stage_badge)}</b>\n\n"
+                f"🚛 <b>Maxsus mashina:</b> {safe_html(t_model)} (<code>{safe_html(t_plate)}</code>)\n"
+                f"🎨 <b>Mashina rangi:</b> {safe_html(t_color)}\n"
+                f"👨‍✈️ <b>Haydovchi:</b> {safe_html(current_driver_state['driver_name'])}\n"
+                f"📞 <b>Aloqa:</b> <code>{safe_html(current_driver_state['driver_phone'])}</code>\n"
+                f"💰 <b>Davlat tarifi:</b> <b>20 000 so‘m</b> (1 dona balon)\n\n"
+                f"{stage_guide}\n\n"
+                f"⏱ <i>Xabar yuborilgan vaqt: {time.strftime('%H:%M, %d.%m.%Y')}</i>\n"
+                f"🔥 <b>Xonadon+ Smart Mahalla Tizimi</b>"
+            )
+
+        try:
+            cid = int(cid_str)
+            res = send_message(cid, msg_to_send, reply_markup=action_keyboard, parse_mode="HTML")
+            if res and res.get("ok"):
+                sent_count += 1
+            time.sleep(0.04)
+        except Exception as e:
+            print(f"[BOT] Xabar yuborishda xatolik ({cid_str}):", e)
 
     if sent_count == 0:
-        print(f"[BOT] «{full_address}» ko‘chasi bo‘yicha hozircha botda fuqaro topilmadi. Boshqa ko‘chadagilarga xabar yuborilmadi.")
+        print(f"[BOT] «{full_address}» MFY bo‘yicha hozircha botda obunachi topilmadi.")
     else:
-        print(f"[BOT] Aniq manzil filtri: «{full_address}» ko‘chasi bo‘yicha {sent_count} ta fuqaroga xabar yetkazildi.")
+        print(f"[BOT] MFY filtri: «{full_address}» mahallasi bo‘yicha {sent_count} ta fuqaroga xabar yetkazildi.")
     return sent_count
 
 # ========================================================
@@ -3241,12 +3264,14 @@ def handle_message(msg):
         driver_street_key = current_driver_state.get("street")
         is_same_street = (user_street_key and driver_street_key and user_street_key == driver_street_key)
 
-        is_on_the_way = (current_driver_state.get("status") == "on_the_way")
+        is_waiting = (current_driver_state.get("status") in ["waiting", "on_the_way"])
 
-        if is_on_the_way:
+        if is_waiting:
             status_text = (
-                "🚚 <b>GAZ MASHINASI HARAKATI VA JORIY HOLATI</b>\n\n"
-                "🛣️ <b>JORIY HOLAT: HAYDOVCHI ISHLAMOQDA!</b>"
+                "🚚 <b>GAZ MASHINASI JORIY HOLATI</b>\n\n"
+                "⏸️ <b>Mashina hozirda kutish rejimida!</b>\n\n"
+                "Haydovchi hozirda navbat kutish yoki qisqa tanaffus holatida. "
+                "Mashina ko‘changizga yoki mahallangizga xizmat ko‘rsatishni boshlagan zahoti sizga avtomatik xabar yetib boradi."
             )
             send_message(chat_id, status_text, parse_mode="HTML")
             return
@@ -3387,6 +3412,11 @@ def handle_callback(cb):
     if data.startswith("confdel_"):
         phone_to_del = data.split("confdel_")[1].strip()
         db_manager.delete_driver(phone_to_del)
+        clean_del = re.sub(r'\D', '', str(phone_to_del))
+        clean_cur = re.sub(r'\D', '', str(current_driver_state.get('driver_phone', '')))
+        if clean_del and clean_cur and clean_del[-9:] == clean_cur[-9:]:
+            current_driver_state['status'] = 'waiting'
+            current_driver_state['is_active'] = 0
         edit_message_text(
             chat_id, msg_id,
             f"✅ <b>Haydovchi ({safe_html(phone_to_del)}) tizimdan butunlay o‘chirildi!</b>\nUning hisobi va kirish ruxsatnomasi bekor qilindi.",
@@ -3423,6 +3453,11 @@ def handle_callback(cb):
     if data.startswith("confdel_"):
         phone_to_del = data.split("confdel_")[1].strip()
         db_manager.delete_driver(phone_to_del)
+        clean_del = re.sub(r'\D', '', str(phone_to_del))
+        clean_cur = re.sub(r'\D', '', str(current_driver_state.get('driver_phone', '')))
+        if clean_del and clean_cur and clean_del[-9:] == clean_cur[-9:]:
+            current_driver_state['status'] = 'waiting'
+            current_driver_state['is_active'] = 0
         edit_message_text(
             chat_id, msg_id,
             f"✅ <b>Haydovchi ({safe_html(phone_to_del)}) tizimdan butunlay o‘chirildi!</b>\nUning hisobi va kirish ruxsatnomasi bekor qilindi.",
@@ -3582,6 +3617,98 @@ class AlertApiHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
+        
+        # --- SERVE AVATAR IMAGES ---
+        if self.path.startswith("/uploads/avatars/"):
+            filename = os.path.basename(self.path.split("?")[0])
+            filepath = os.path.join(BASE_DIR, "uploads", "avatars", filename)
+            if os.path.exists(filepath):
+                self.send_response(200)
+                content_type = "image/png" if filename.lower().endswith(".png") else "image/jpeg"
+                self.send_header("Content-Type", content_type)
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                with open(filepath, "rb") as f:
+                    self.wfile.write(f.read())
+                return
+            else:
+                self.send_response(404)
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                return
+
+        # --- REAL-TIME ACTIVE TRUCKS FOR CITIZEN MAP & CARDS ---
+        if self.path.startswith("/api/active-trucks") or self.path.startswith("/api/get-active-trucks"):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+
+            qs = urllib.parse.urlparse(self.path).query
+            params = urllib.parse.parse_qs(qs)
+            q_reg = params.get("region", ["qashqadaryo"])[0]
+            q_dist = params.get("district", ["nishon"])[0]
+            q_mfy = params.get("mfy", ["yangi_nishon"])[0]
+
+            db_trucks = db_manager.get_active_trucks(region=q_reg, district=q_dist, mfy=q_mfy)
+
+            drv_phone = current_driver_state.get("driver_phone", "")
+            is_waiting = (current_driver_state.get("status") in ["waiting", "idle"])
+            is_active_flag = current_driver_state.get("is_active", 1)
+            is_match_mfy = (not q_mfy or current_driver_state.get("mfy") == q_mfy)
+            is_match_dist = (not q_dist or current_driver_state.get("district") == q_dist)
+
+            db_driver = db_manager.get_driver_by_phone(drv_phone) if drv_phone else None
+
+            response_trucks = []
+            seen_plates = set()
+
+            if not is_waiting and is_active_flag and is_match_mfy and is_match_dist and db_driver:
+                live_truck = {
+                    "id": f"drv_{re.sub(r'\D', '', drv_phone)[-7:]}",
+                    "name": current_driver_state.get("driver_name", "Ahror Suyunov"),
+                    "phone": drv_phone,
+                    "model": current_driver_state.get("truck_model", "Isuzu NPR 75"),
+                    "plate": current_driver_state.get("truck_plate", "70 M 260 EB"),
+                    "color": current_driver_state.get("truck_color", "Oq (Sariq chiziqli)"),
+                    "status": current_driver_state.get("status", "arrived"),
+                    "street": current_driver_state.get("street", "istiqlol"),
+                    "street_name": current_driver_state.get("street_name", "Istiqlol ko‘chasi"),
+                    "mfy": current_driver_state.get("mfy", q_mfy),
+                    "district": current_driver_state.get("district", q_dist),
+                    "region": current_driver_state.get("region", q_reg),
+                    "lat": 38.6850,
+                    "lng": 65.6800,
+                    "avatar_url": current_driver_state.get("avatar_url") or (db_driver.get("avatar_url") if db_driver else "") or ""
+                }
+                response_trucks.append(live_truck)
+                seen_plates.add(live_truck["plate"].replace(" ", "").upper())
+
+            for dt in db_trucks:
+                pl_clean = dt.get("truck_plate", "").replace(" ", "").upper()
+                if pl_clean not in seen_plates:
+                    response_trucks.append({
+                        "id": f"drv_{re.sub(r'\D', '', dt.get('phone', ''))[-7:]}",
+                        "name": dt.get("full_name", ""),
+                        "phone": dt.get("phone", ""),
+                        "model": dt.get("truck_model", "Isuzu NPR 75"),
+                        "plate": dt.get("truck_plate", ""),
+                        "color": dt.get("truck_color", "Oq"),
+                        "status": dt.get("status", "arrived"),
+                        "street": dt.get("street", "istiqlol"),
+                        "street_name": dt.get("street_name", "Istiqlol ko‘chasi"),
+                        "mfy": dt.get("assigned_mfy", q_mfy),
+                        "district": dt.get("assigned_district", q_dist),
+                        "region": dt.get("assigned_region", q_reg),
+                        "lat": dt.get("lat", 38.6850),
+                        "lng": dt.get("lng", 65.6800),
+                        "avatar_url": dt.get("avatar_url", "")
+                    })
+                    seen_plates.add(pl_clean)
+
+            self.wfile.write(json.dumps({"status": "ok", "trucks": response_trucks}).encode("utf-8"))
+            return
+
         if self.path.startswith("/api/app-version"):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -3627,6 +3754,57 @@ class AlertApiHandler(BaseHTTPRequestHandler):
     def do_POST(self):
 
         # --- API: 2FA FORGOT RECOVERY REQUEST (SEND 6-CHAR ALPHANUMERIC CODE TO BOT) ---
+        
+        # --- API: UPLOAD PROFILE AVATAR (DRIVER & RESIDENT) ---
+        if self.path == "/api/upload-avatar":
+            try:
+                import base64
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                body = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
+                data = json.loads(body)
+                phone = str(data.get("phone", "")).strip()
+                role = str(data.get("role", "resident")).strip()
+                image_data = data.get("image_data", "")
+
+                avatar_url = ""
+                if image_data:
+                    clean_p = re.sub(r'\D', '', phone) or "user"
+                    uploads_dir = os.path.join(BASE_DIR, "uploads", "avatars")
+                    os.makedirs(uploads_dir, exist_ok=True)
+                    filename = f"avatar_{clean_p}_{int(time.time())}.jpg"
+                    filepath = os.path.join(uploads_dir, filename)
+
+                    if "," in image_data:
+                        header, encoded = image_data.split(",", 1)
+                    else:
+                        encoded = image_data
+                    try:
+                        with open(filepath, "wb") as f:
+                            f.write(base64.b64decode(encoded))
+                        avatar_url = f"/uploads/avatars/{filename}"
+                    except Exception as err:
+                        print("Avatar file write failed, using data URL:", err)
+                        avatar_url = image_data
+
+                db_manager.save_user_avatar(phone, role, avatar_url or image_data)
+                if role == "driver":
+                    current_driver_state["avatar_url"] = avatar_url or image_data
+
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "ok", "avatar_url": avatar_url or image_data}).encode("utf-8"))
+                return
+            except Exception as e:
+                print("Error in /api/upload-avatar:", e)
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "error", "message": str(e)}).encode("utf-8"))
+                return
+
         if self.path == "/api/auth/2fa-forgot-request":
             try:
                 import random, string
@@ -3902,7 +4080,7 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 if action == "register":
                     fn = reg_data.get("first_name", "").strip()
                     ln = reg_data.get("last_name", "").strip()
-                    full_name = f"{fn} {ln}".strip() or "Fuqaro"
+                    full_name = f"{fn} {ln}".strip() or "Ahror Suyunov"
                     res = db_manager.register_user(
                         phone=f"+{raw_phone}",
                         full_name=full_name,
@@ -3913,7 +4091,12 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                         street="koksoy_markaziy",
                         house_number="1-uy"
                     )
-                    user_obj = res.get("user") or {"phone": f"+{raw_phone}", "full_name": full_name, "role": "resident"}
+                    user_obj = res.get("user")
+                    if not user_obj:
+                        user_obj = {"phone": f"+{raw_phone}", "full_name": full_name, "role": "resident", "account_id": db_manager.generate_unique_account_id("XP-")}
+                    elif not user_obj.get("account_id"):
+                        user_obj["account_id"] = db_manager.generate_unique_account_id("XP-")
+
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
                     self.send_header("Access-Control-Allow-Origin", "*")
@@ -3933,7 +4116,9 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                         c.execute("SELECT * FROM users WHERE phone LIKE ?", (f"%{raw_phone[-9:]}%",))
                         user = c.fetchone()
                         conn.close()
-                    user_dict = dict(user) if user else {"phone": f"+{raw_phone}", "full_name": "Fuqaro", "role": "resident"}
+                    user_dict = dict(user) if user else {"phone": f"+{raw_phone}", "full_name": "Ahror Suyunov", "role": "resident", "account_id": db_manager.generate_unique_account_id("XP-")}
+                    if not user_dict.get("account_id"):
+                        user_dict["account_id"] = db_manager.generate_unique_account_id("XP-")
                     
                     status_2fa = db_manager.get_user_2fa_status(f"+{raw_phone}")
                     if not status_2fa.get("has_2fa"):
@@ -4070,9 +4255,12 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                                 resp = {"ok": False, "message": "❌ Parol noto‘g‘ri! Administrator bergan parolni kiriting."}
                             else:
                                 status_2fa = db_manager.get_user_2fa_status(matched["phone"])
+                                matched_dict = dict(matched)
+                                if not matched_dict.get("account_id"):
+                                    matched_dict["account_id"] = db_manager.generate_unique_account_id("XP-")
                                 resp = {
                                     "ok": True,
-                                    "user": dict(matched),
+                                    "user": matched_dict,
                                     "require_2fa": status_2fa.get("has_2fa", False),
                                     "hint": status_2fa.get("hint", "")
                                 }
