@@ -18,6 +18,16 @@ def init_db():
 
     # 1. Users Table (Fuqarolar va Haydovchilar)
     cursor.execute("""
+    CREATE TABLE IF NOT EXISTS user_avatars (
+        phone_clean TEXT PRIMARY KEY,
+        full_phone TEXT,
+        role TEXT,
+        avatar_url TEXT,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    """)
+
+    cursor.execute("""
     CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         phone TEXT UNIQUE NOT NULL,
@@ -508,10 +518,93 @@ def save_user_avatar(phone, role, avatar_url):
     conn = get_connection()
     c = conn.cursor()
     clean_p = re.sub(r'\D', '', str(phone or ''))
+    if not clean_p:
+        conn.close()
+        return False
+        
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS user_avatars (
+            phone_clean TEXT PRIMARY KEY,
+            full_phone TEXT,
+            role TEXT,
+            avatar_url TEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    c.execute("""
+        INSERT OR REPLACE INTO user_avatars (phone_clean, full_phone, role, avatar_url, updated_at)
+        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+    """, (clean_p[-9:], phone, role, avatar_url))
+
     if role == 'driver':
         c.execute("UPDATE drivers SET avatar_url = ? WHERE phone LIKE ?", (avatar_url, f"%{clean_p[-9:]}%"))
+        c.execute("UPDATE driver_live SET updated_at = CURRENT_TIMESTAMP WHERE phone LIKE ?", (f"%{clean_p[-9:]}%",))
     else:
         c.execute("UPDATE users SET avatar_url = ? WHERE phone LIKE ?", (avatar_url, f"%{clean_p[-9:]}%"))
+    conn.commit()
+    conn.close()
+    return True
+
+def get_user_avatar(phone, role='resident'):
+    conn = get_connection()
+    c = conn.cursor()
+    clean_p = re.sub(r'\D', '', str(phone or ''))
+    if len(clean_p) < 9:
+        conn.close()
+        return ""
+    
+    # 1. Check dedicated user_avatars table first
+    try:
+        c.execute("SELECT avatar_url FROM user_avatars WHERE phone_clean = ?", (clean_p[-9:],))
+        row = c.fetchone()
+        if row and row["avatar_url"]:
+            conn.close()
+            return row["avatar_url"]
+    except Exception:
+        pass
+
+    # 2. Check drivers table if driver
+    if role == 'driver':
+        c.execute("SELECT avatar_url FROM drivers WHERE phone LIKE ?", (f"%{clean_p[-9:]}%",))
+        row = c.fetchone()
+        if row and row["avatar_url"]:
+            conn.close()
+            return row["avatar_url"]
+
+    # 3. Check users table
+    c.execute("SELECT avatar_url FROM users WHERE phone LIKE ?", (f"%{clean_p[-9:]}%",))
+    row = c.fetchone()
+    if row and row["avatar_url"]:
+        conn.close()
+        return row["avatar_url"]
+
+    conn.close()
+    return ""
+
+def upsert_driver_live(phone, driver_name, truck_plate, truck_model, truck_color, status, stage, lat, lng, region, district, mfy, street, street_name, avatar_url=""):
+    conn = get_connection()
+    c = conn.cursor()
+    clean_p = re.sub(r'\D', '', str(phone or ''))
+    
+    # Check if driver deactivated by admin
+    c.execute("SELECT is_active, avatar_url FROM drivers WHERE phone LIKE ?", (f"%{clean_p[-9:]}%",))
+    drv_row = c.fetchone()
+    if drv_row and drv_row["is_active"] == 0:
+        conn.close()
+        return False
+        
+    final_avatar = avatar_url or (drv_row["avatar_url"] if drv_row else "") or ""
+    
+    c.execute("""
+        INSERT OR REPLACE INTO driver_live 
+        (phone, driver_name, truck_plate, truck_model, truck_color, status, stage, lat, lng, region, district, mfy, street, street_name, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    """, (phone, driver_name, truck_plate, truck_model, truck_color, status, stage, float(lat), float(lng), region, district, mfy, street, street_name))
+    
+    if mfy:
+        c.execute("UPDATE drivers SET assigned_mfy = ?, assigned_district = COALESCE(?, assigned_district), assigned_region = COALESCE(?, assigned_region) WHERE phone LIKE ?", 
+                  (mfy, district, region, f"%{clean_p[-9:]}%"))
+                  
     conn.commit()
     conn.close()
     return True
@@ -520,8 +613,14 @@ def get_active_trucks(region=None, district=None, mfy=None):
     conn = get_connection()
     c = conn.cursor()
     
-    # Only select drivers that are actually active in drivers table
-    query = """
+    def norm(s):
+        return re.sub(r'[^a-zA-Z0-9]', '', str(s or '')).lower()
+        
+    target_mfy = norm(mfy)
+    target_dist = norm(district)
+    target_reg = norm(region)
+    
+    c.execute("""
         SELECT d.phone, d.full_name, d.truck_model, d.truck_plate, d.truck_color,
                d.assigned_region, d.assigned_district, d.assigned_mfy, d.avatar_url,
                COALESCE(l.lat, 38.685) as lat,
@@ -530,33 +629,41 @@ def get_active_trucks(region=None, district=None, mfy=None):
                COALESCE(l.stage, 'collect') as stage,
                COALESCE(l.street, 'istiqlol') as street,
                COALESCE(l.street_name, 'Istiqlol ko‘chasi') as street_name,
+               COALESCE(l.mfy, d.assigned_mfy) as live_mfy,
+               COALESCE(l.district, d.assigned_district) as live_dist,
+               COALESCE(l.region, d.assigned_region) as live_reg,
                l.updated_at
         FROM drivers d
-        LEFT JOIN driver_live l ON d.phone = l.phone
+        LEFT JOIN driver_live l ON (d.phone = l.phone OR l.phone LIKE '%' || SUBSTR(REPLACE(REPLACE(d.phone, '+', ''), ' ', ''), -9))
         WHERE d.is_active = 1
-    """
-    params = []
-    
-    c.execute(query, tuple(params))
+    """)
     rows = c.fetchall()
     conn.close()
     
     results = []
+    seen_plates = set()
     for r in rows:
-        d_dict = dict(r)
+        d = dict(r)
         
-        # Exclude drivers in waiting or idle mode
-        if d_dict.get('status') in ['waiting', 'idle']:
+        # Filter waiting / idle
+        if str(d.get('status', '')).lower() in ['waiting', 'idle']:
             continue
             
-        # Filter by MFY if requested
-        if mfy and d_dict.get('assigned_mfy') and d_dict['assigned_mfy'].lower() != mfy.lower():
+        cur_mfy = norm(d.get('live_mfy') or d.get('assigned_mfy'))
+        cur_dist = norm(d.get('live_dist') or d.get('assigned_district'))
+        cur_reg = norm(d.get('live_reg') or d.get('assigned_region'))
+        
+        # MFY filter
+        if target_mfy and cur_mfy and target_mfy != cur_mfy:
+            continue
+        if target_dist and cur_dist and target_dist != cur_dist:
             continue
             
-        # Filter by District if requested
-        if district and d_dict.get('assigned_district') and d_dict['assigned_district'].lower() != district.lower():
+        pl_clean = re.sub(r'\s+', '', str(d.get("truck_plate", ""))).upper()
+        if pl_clean in seen_plates:
             continue
-            
-        results.append(d_dict)
+        seen_plates.add(pl_clean)
+        
+        results.append(d)
         
     return results

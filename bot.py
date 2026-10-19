@@ -2640,6 +2640,7 @@ def get_street_keyboard(reg_key, dist_key, mfy_key):
 # ========================================================
 # 5. XABARNOMALARNI TARQATISH (DRIVER DISPATCH)
 # ========================================================
+active_driver_states = {}
 current_driver_state = {
     "region": "qashqadaryo",
     "district": "nishon",
@@ -3650,65 +3651,126 @@ class AlertApiHandler(BaseHTTPRequestHandler):
             q_dist = params.get("district", ["nishon"])[0]
             q_mfy = params.get("mfy", ["yangi_nishon"])[0]
 
+            def norm_key(s):
+                return re.sub(r'[^a-zA-Z0-9]', '', str(s or '')).lower()
+
+            target_mfy = norm_key(q_mfy)
+            target_dist = norm_key(q_dist)
+            target_reg = norm_key(q_reg)
+
             db_trucks = db_manager.get_active_trucks(region=q_reg, district=q_dist, mfy=q_mfy)
-
-            drv_phone = current_driver_state.get("driver_phone", "")
-            is_waiting = (current_driver_state.get("status") in ["waiting", "idle"])
-            is_active_flag = current_driver_state.get("is_active", 1)
-            is_match_mfy = (not q_mfy or current_driver_state.get("mfy") == q_mfy)
-            is_match_dist = (not q_dist or current_driver_state.get("district") == q_dist)
-
-            db_driver = db_manager.get_driver_by_phone(drv_phone) if drv_phone else None
 
             response_trucks = []
             seen_plates = set()
 
-            if not is_waiting and is_active_flag and is_match_mfy and is_match_dist and db_driver:
-                clean_phone_id = re.sub(r'\D', '', str(drv_phone))[-7:]
-                live_truck = {
-                    "id": f"drv_{clean_phone_id}",
-                    "name": current_driver_state.get("driver_name", "Ahror Suyunov"),
-                    "phone": drv_phone,
-                    "model": current_driver_state.get("truck_model", "Isuzu NPR 75"),
-                    "plate": current_driver_state.get("truck_plate", "70 M 260 EB"),
-                    "color": current_driver_state.get("truck_color", "Oq (Sariq chiziqli)"),
-                    "status": current_driver_state.get("status", "arrived"),
-                    "street": current_driver_state.get("street", "istiqlol"),
-                    "street_name": current_driver_state.get("street_name", "Istiqlol ko‘chasi"),
-                    "mfy": current_driver_state.get("mfy", q_mfy),
-                    "district": current_driver_state.get("district", q_dist),
-                    "region": current_driver_state.get("region", q_reg),
-                    "lat": 38.6850,
-                    "lng": 65.6800,
-                    "avatar_url": current_driver_state.get("avatar_url") or (db_driver.get("avatar_url") if db_driver else "") or ""
-                }
-                response_trucks.append(live_truck)
-                seen_plates.add(live_truck["plate"].replace(" ", "").upper())
+            # 1. Add all live drivers currently in active_driver_states that match MFY and are active
+            for cp, ds in list(active_driver_states.items()):
+                st = str(ds.get("status", "")).lower()
+                if st in ["waiting", "idle"]:
+                    continue
+                if ds.get("is_active", 1) == 0:
+                    continue
+                # Exclude stale drivers inactive > 45 minutes
+                if time.time() - ds.get("updated_at", 0) > 2700:
+                    continue
 
-            for dt in db_trucks:
-                pl_clean = dt.get("truck_plate", "").replace(" ", "").upper()
+                drv_mfy = norm_key(ds.get("mfy", ""))
+                drv_dist = norm_key(ds.get("district", ""))
+                if target_mfy and drv_mfy and target_mfy != drv_mfy:
+                    continue
+                if target_dist and drv_dist and target_dist != drv_dist:
+                    continue
+
+                pl_clean = re.sub(r'\s+', '', str(ds.get("truck_plate", ""))).upper()
                 if pl_clean not in seen_plates:
-                    dt_phone_clean = re.sub(r'\D', '', str(dt.get('phone', '')))[-7:]
+                    raw_phone = str(ds.get("phone", ""))
+                    clean_phone_id = re.sub(r'\D', '', raw_phone)[-7:] or "truck"
+                    response_trucks.append({
+                        "id": f"drv_{clean_phone_id}",
+                        "name": ds.get("driver_name", "Ahror Suyunov"),
+                        "phone": raw_phone,
+                        "model": ds.get("truck_model", "Isuzu NPR 75"),
+                        "plate": ds.get("truck_plate", ""),
+                        "color": ds.get("truck_color", "Oq (Sariq chiziqli)"),
+                        "status": ds.get("status", "arrived"),
+                        "street": ds.get("street", "istiqlol"),
+                        "street_name": ds.get("street_name", "Istiqlol ko‘chasi"),
+                        "mfy": ds.get("mfy", q_mfy),
+                        "district": ds.get("district", q_dist),
+                        "region": ds.get("region", q_reg),
+                        "lat": float(ds.get("lat", 38.6850)),
+                        "lng": float(ds.get("lng", 65.6800)),
+                        "avatar_url": ds.get("avatar_url") or ""
+                    })
+                    seen_plates.add(pl_clean)
+
+            # 2. Add any additional trucks from db_trucks (registered active trucks in database)
+            for dt in db_trucks:
+                pl_clean = re.sub(r'\s+', '', str(dt.get("truck_plate", ""))).upper()
+                if pl_clean not in seen_plates:
+                    dt_phone = str(dt.get("phone", ""))
+                    dt_phone_clean = re.sub(r'\D', '', dt_phone)[-7:] or "truck"
                     response_trucks.append({
                         "id": f"drv_{dt_phone_clean}",
-                        "name": dt.get("full_name", ""),
-                        "phone": dt.get("phone", ""),
+                        "name": dt.get("full_name") or dt.get("driver_name", "Haydovchi"),
+                        "phone": dt_phone,
                         "model": dt.get("truck_model", "Isuzu NPR 75"),
                         "plate": dt.get("truck_plate", ""),
                         "color": dt.get("truck_color", "Oq"),
                         "status": dt.get("status", "arrived"),
                         "street": dt.get("street", "istiqlol"),
                         "street_name": dt.get("street_name", "Istiqlol ko‘chasi"),
-                        "mfy": dt.get("assigned_mfy", q_mfy),
-                        "district": dt.get("assigned_district", q_dist),
-                        "region": dt.get("assigned_region", q_reg),
-                        "lat": dt.get("lat", 38.6850),
-                        "lng": dt.get("lng", 65.6800),
-                        "avatar_url": dt.get("avatar_url", "")
+                        "mfy": dt.get("live_mfy") or dt.get("assigned_mfy", q_mfy),
+                        "district": dt.get("live_dist") or dt.get("assigned_district", q_dist),
+                        "region": dt.get("live_reg") or dt.get("assigned_region", q_reg),
+                        "lat": float(dt.get("lat", 38.6850)),
+                        "lng": float(dt.get("lng", 65.6800)),
+                        "avatar_url": dt.get("avatar_url") or ""
                     })
                     seen_plates.add(pl_clean)
 
             self.wfile.write(json.dumps({"status": "ok", "trucks": response_trucks}).encode("utf-8"))
+            return
+
+        if self.path.startswith("/api/auth/2fa-status"):
+            try:
+                from urllib.parse import urlparse, parse_qs
+                parsed = urlparse(self.path)
+                qs = parse_qs(parsed.query)
+                q_phone = qs.get("phone", [""])[0].strip()
+                status_2fa = db_manager.get_user_2fa_status(q_phone)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps(status_2fa).encode("utf-8"))
+            except Exception as e:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"has_2fa": False, "hint": ""}).encode("utf-8"))
+            return
+
+        if self.path.startswith("/api/get-avatar"):
+            try:
+                from urllib.parse import urlparse, parse_qs
+                parsed = urlparse(self.path)
+                qs = parse_qs(parsed.query)
+                q_phone = qs.get("phone", [""])[0].strip()
+                q_role = qs.get("role", ["resident"])[0].strip()
+                av_url = db_manager.get_user_avatar(q_phone, q_role)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "ok", "avatar_url": av_url}).encode("utf-8"))
+            except Exception as e:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "error", "avatar_url": ""}).encode("utf-8"))
             return
 
         if self.path.startswith("/api/app-version"):
@@ -4385,20 +4447,73 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
             return
 
-        # 6. DRIVER LIVE LOCATION UPDATE (GPS)
-        if self.path == "/api/driver/location":
+        # 6. DRIVER LIVE LOCATION & TELEMETRY UPDATE (GPS & Multi-driver state)
+        if self.path == "/api/driver/location" or self.path == "/api/driver/telemetry":
             try:
                 length = int(self.headers.get("Content-Length", 0) or 0)
                 body = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
                 data = json.loads(body)
-                phone = data.get("phone", "+998901234567")
-                lat = data.get("lat", 38.665)
-                lng = data.get("lng", 65.698)
-                stat = data.get("status")
-                stg = data.get("stage")
-                st_k = data.get("street")
-                st_n = data.get("street_name")
-                db_manager.update_driver_location(phone, lat, lng, stat, stg, st_k, st_n)
+                phone = str(data.get("phone", "+998901234567")).strip()
+                clean_p = re.sub(r'\D', '', phone)[-9:] or "unknown"
+                
+                lat = float(data.get("lat", 38.665))
+                lng = float(data.get("lng", 65.698))
+                stat = data.get("status", "arrived")
+                stg = data.get("stage", "collect")
+                reg_k = data.get("region", "qashqadaryo")
+                dist_k = data.get("district", "nishon")
+                mfy_k = data.get("mfy", "kok_soy")
+                st_k = data.get("street", "istiqlol")
+                st_n = data.get("street_name", "Istiqlol ko‘chasi")
+                drv_n = data.get("driver_name", "Ahror Suyunov")
+                t_plate = data.get("truck_plate") or data.get("plate", "70 M 260 EB")
+                t_model = data.get("truck_model", "Isuzu NPR 75")
+                t_color = data.get("truck_color", "Oq (Sariq chiziqli)")
+                avatar_u = data.get("avatar_url", "")
+
+                # Check if driver deactivated in DB
+                db_driver = db_manager.get_driver_by_phone(phone)
+                is_active = db_driver.get("is_active", 1) if db_driver else 1
+
+                # Update live in-memory registry
+                active_driver_states[clean_p] = {
+                    "phone": phone,
+                    "driver_name": drv_n,
+                    "truck_plate": t_plate,
+                    "truck_model": t_model,
+                    "truck_color": t_color,
+                    "status": stat,
+                    "stage": stg,
+                    "region": reg_k,
+                    "district": dist_k,
+                    "mfy": mfy_k,
+                    "street": st_k,
+                    "street_name": st_n,
+                    "lat": lat,
+                    "lng": lng,
+                    "avatar_url": avatar_u or (db_driver.get("avatar_url") if db_driver else "") or "",
+                    "is_active": is_active,
+                    "updated_at": time.time()
+                }
+
+                # Update database
+                db_manager.upsert_driver_live(
+                    phone=phone,
+                    driver_name=drv_n,
+                    truck_plate=t_plate,
+                    truck_model=t_model,
+                    truck_color=t_color,
+                    status=stat,
+                    stage=stg,
+                    lat=lat,
+                    lng=lng,
+                    region=reg_k,
+                    district=dist_k,
+                    mfy=mfy_k,
+                    street=st_k,
+                    street_name=st_n,
+                    avatar_url=avatar_u
+                )
 
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -4482,46 +4597,69 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 length = int(self.headers.get("Content-Length", 0) or 0)
                 body = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
                 data = json.loads(body)
+                phone = str(data.get("driver_phone") or data.get("phone", "+998901234567")).strip()
+                clean_p = re.sub(r'\D', '', phone)[-9:] or "unknown"
                 new_status = data.get("status", "arrived")
-                current_driver_state["status"] = new_status
-                if "street" in data:
-                    current_driver_state["street"] = data["street"]
-                if "region" in data:
-                    current_driver_state["region"] = data["region"]
-                if "district" in data:
-                    current_driver_state["district"] = data["district"]
-                if "mfy" in data:
-                    current_driver_state["mfy"] = data["mfy"]
-                if "stage" in data:
-                    current_driver_state["stage"] = data["stage"]
-                if "driver_name" in data:
-                    current_driver_state["driver_name"] = data["driver_name"]
-                if "driver_phone" in data:
-                    current_driver_state["driver_phone"] = data["driver_phone"]
-                if "plate" in data:
-                    current_driver_state["truck_plate"] = data["plate"]
-                if "truck_plate" in data:
-                    current_driver_state["truck_plate"] = data["truck_plate"]
-                if "truck_model" in data:
-                    current_driver_state["truck_model"] = data["truck_model"]
-                if "truck_color" in data:
-                    current_driver_state["truck_color"] = data["truck_color"]
-                if "last_address_text" in data:
-                    current_driver_state["last_address_text"] = data["last_address_text"]
-                elif "street_name" in data:
-                    st_n = data.get("street_name")
-                    rg_n = data.get("region_name", "")
-                    ds_n = data.get("district_name", "")
-                    mf_n = data.get("mfy_name", "")
-                    current_driver_state["last_address_text"] = f"{rg_n}, {ds_n}, {mf_n}, {st_n}".strip(", ")
                 
+                # Update current_driver_state
+                current_driver_state["status"] = new_status
+                if "street" in data: current_driver_state["street"] = data["street"]
+                if "region" in data: current_driver_state["region"] = data["region"]
+                if "district" in data: current_driver_state["district"] = data["district"]
+                if "mfy" in data: current_driver_state["mfy"] = data["mfy"]
+                if "stage" in data: current_driver_state["stage"] = data["stage"]
+                if "driver_name" in data: current_driver_state["driver_name"] = data["driver_name"]
+                if "driver_phone" in data: current_driver_state["driver_phone"] = data["driver_phone"]
+                if "plate" in data: current_driver_state["truck_plate"] = data["plate"]
+                if "truck_plate" in data: current_driver_state["truck_plate"] = data["truck_plate"]
+                if "truck_model" in data: current_driver_state["truck_model"] = data["truck_model"]
+                if "truck_color" in data: current_driver_state["truck_color"] = data["truck_color"]
+
+                # Update in active_driver_states
+                existing = active_driver_states.get(clean_p, {})
+                existing.update({
+                    "phone": phone,
+                    "driver_name": data.get("driver_name") or existing.get("driver_name", "Ahror Suyunov"),
+                    "truck_plate": data.get("truck_plate") or data.get("plate") or existing.get("truck_plate", "70 M 260 EB"),
+                    "truck_model": data.get("truck_model") or existing.get("truck_model", "Isuzu NPR 75"),
+                    "truck_color": data.get("truck_color") or existing.get("truck_color", "Oq (Sariq chiziqli)"),
+                    "status": new_status,
+                    "stage": data.get("stage") or existing.get("stage", "collect"),
+                    "region": data.get("region") or existing.get("region", "qashqadaryo"),
+                    "district": data.get("district") or existing.get("district", "nishon"),
+                    "mfy": data.get("mfy") or existing.get("mfy", "kok_soy"),
+                    "street": data.get("street") or existing.get("street", "istiqlol"),
+                    "street_name": data.get("street_name") or existing.get("street_name", "Istiqlol ko‘chasi"),
+                    "updated_at": time.time()
+                })
+                active_driver_states[clean_p] = existing
+
+                # Also save to DB
+                db_manager.upsert_driver_live(
+                    phone=phone,
+                    driver_name=existing.get("driver_name", ""),
+                    truck_plate=existing.get("truck_plate", ""),
+                    truck_model=existing.get("truck_model", ""),
+                    truck_color=existing.get("truck_color", ""),
+                    status=new_status,
+                    stage=existing.get("stage", "collect"),
+                    lat=existing.get("lat", 38.6850),
+                    lng=existing.get("lng", 65.6800),
+                    region=existing.get("region", "qashqadaryo"),
+                    district=existing.get("district", "nishon"),
+                    mfy=existing.get("mfy", "kok_soy"),
+                    street=existing.get("street", "istiqlol"),
+                    street_name=existing.get("street_name", "Istiqlol ko‘chasi"),
+                    avatar_url=existing.get("avatar_url", "")
+                )
+
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
                 self.send_header("Access-Control-Allow-Headers", "*")
                 self.end_headers()
-                self.wfile.write(json.dumps({"ok": True, "driver_state": current_driver_state}).encode("utf-8"))
+                self.wfile.write(json.dumps({"ok": True, "driver_state": existing}).encode("utf-8"))
             except Exception as e:
                 self.send_response(500)
                 self.end_headers()
