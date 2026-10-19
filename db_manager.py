@@ -275,10 +275,10 @@ def add_driver(phone, full_name, truck_plate, password='gaz2026', truck_model='I
     """, (clean_p, full_name, assigned_region, assigned_district, assigned_mfy, account_id))
     c.execute("UPDATE users SET two_step_password = NULL, two_step_hint = NULL WHERE phone = ? OR phone LIKE ?", (clean_p, f"%{clean_p[-9:]}%"))
 
-    # Also register in driver_live
+    # Also register in driver_live with initial WAITING status (never shown to citizens until driver starts working)
     c.execute("""
     INSERT OR REPLACE INTO driver_live (phone, driver_name, truck_plate, truck_model, truck_color, status, stage, lat, lng, region, district, mfy)
-    VALUES (?, ?, ?, ?, ?, 'arrived', 'collect', 38.665, 65.698, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, 'waiting', 'collect', NULL, NULL, ?, ?, ?)
     """, (clean_p, full_name, truck_plate, truck_model, truck_color, assigned_region, assigned_district, assigned_mfy))
 
     conn.commit()
@@ -639,25 +639,40 @@ def get_user_avatar(phone, role='resident'):
     conn.close()
     return ""
 
-def upsert_driver_live(phone, driver_name, truck_plate, truck_model, truck_color, status, stage, lat, lng, region, district, mfy, street, street_name, avatar_url=""):
+def upsert_driver_live(phone, driver_name="", truck_plate="", truck_model="", truck_color="", status="waiting", stage="collect", lat=None, lng=None, region="", district="", mfy="", street="", street_name="", avatar_url=""):
     conn = get_connection()
     c = conn.cursor()
     clean_p = re.sub(r'\D', '', str(phone or ''))
     
     # Check if driver deactivated by admin
-    c.execute("SELECT is_active, avatar_url FROM drivers WHERE phone LIKE ?", (f"%{clean_p[-9:]}%",))
+    c.execute("SELECT * FROM drivers WHERE phone LIKE ?", (f"%{clean_p[-9:]}%",))
     drv_row = c.fetchone()
     if drv_row and drv_row["is_active"] == 0:
         conn.close()
         return False
         
+    c.execute("SELECT * FROM driver_live WHERE phone LIKE ?", (f"%{clean_p[-9:]}%",))
+    live_row = c.fetchone()
+
+    f_name = driver_name or (live_row["driver_name"] if live_row else "") or (drv_row["full_name"] if drv_row else "") or ""
+    f_plate = truck_plate or (live_row["truck_plate"] if live_row else "") or (drv_row["truck_plate"] if drv_row else "") or ""
+    f_model = truck_model or (live_row["truck_model"] if live_row else "") or (drv_row["truck_model"] if drv_row else "") or "Isuzu NPR 75"
+    f_color = truck_color or (live_row["truck_color"] if live_row else "") or (drv_row["truck_color"] if drv_row else "") or "Oq"
+    f_reg = region or (live_row["region"] if live_row else "") or (drv_row["assigned_region"] if drv_row else "") or ""
+    f_dist = district or (live_row["district"] if live_row else "") or (drv_row["assigned_district"] if drv_row else "") or ""
+    f_mfy = mfy or (live_row["mfy"] if live_row else "") or (drv_row["assigned_mfy"] if drv_row else "") or ""
+    f_street = street or (live_row["street"] if live_row else "") or "istiqlol"
+    f_street_name = street_name or (live_row["street_name"] if live_row else "") or "Istiqlol ko‘chasi"
     final_avatar = avatar_url or (drv_row["avatar_url"] if drv_row else "") or ""
     
+    lat_val = float(lat) if lat is not None else None
+    lng_val = float(lng) if lng is not None else None
+
     c.execute("""
         INSERT OR REPLACE INTO driver_live 
         (phone, driver_name, truck_plate, truck_model, truck_color, status, stage, lat, lng, region, district, mfy, street, street_name, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-    """, (phone, driver_name, truck_plate, truck_model, truck_color, status, stage, float(lat), float(lng), region, district, mfy, street, street_name))
+    """, (phone, f_name, f_plate, f_model, f_color, status, stage, lat_val, lng_val, f_reg, f_dist, f_mfy, f_street, f_street_name))
     
     c.execute("""
         UPDATE drivers 
@@ -693,9 +708,9 @@ def get_active_trucks(region=None, district=None, mfy=None):
                COALESCE(NULLIF(l.truck_plate, ''), d.truck_plate) as truck_plate, 
                COALESCE(NULLIF(l.truck_color, ''), d.truck_color) as truck_color,
                d.assigned_region, d.assigned_district, d.assigned_mfy, d.avatar_url,
-               COALESCE(l.lat, 38.685) as lat,
-               COALESCE(l.lng, 65.680) as lng,
-               COALESCE(l.status, 'arrived') as status,
+               l.lat,
+               l.lng,
+               COALESCE(l.status, 'waiting') as status,
                COALESCE(l.stage, 'collect') as stage,
                COALESCE(l.street, 'istiqlol') as street,
                COALESCE(l.street_name, 'Istiqlol ko‘chasi') as street_name,
@@ -717,19 +732,23 @@ def get_active_trucks(region=None, district=None, mfy=None):
         
         # Strictly hide any driver in waiting / idle / paused / stopped / kutish mode
         st_lower = str(d.get('status', '')).strip().lower()
-        if st_lower in ['waiting', 'idle', 'paused', 'stopped', 'kutish']:
+        if st_lower in ['waiting', 'idle', 'paused', 'stopped', 'kutish'] or not st_lower:
             continue
-        if not st_lower:
-            d['status'] = 'arrived'
+
+        # If driver has no real GPS coordinates yet, do not display to citizens
+        if d.get('lat') is None or d.get('lng') is None:
+            continue
             
         cur_mfy = norm(d.get('live_mfy') or d.get('assigned_mfy'))
         cur_dist = norm(d.get('live_dist') or d.get('assigned_district'))
         cur_reg = norm(d.get('live_reg') or d.get('assigned_region'))
         
-        # MFY filter
-        if target_mfy and cur_mfy and target_mfy != cur_mfy:
+        # Strict MFY check: only match if both sides have identical MFY
+        if not target_mfy or not cur_mfy or target_mfy != cur_mfy:
             continue
         if target_dist and cur_dist and target_dist != cur_dist:
+            continue
+        if target_reg and cur_reg and target_reg != cur_reg:
             continue
             
         pl_clean = re.sub(r'\s+', '', str(d.get("truck_plate", ""))).upper()

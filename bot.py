@@ -3018,6 +3018,12 @@ def handle_message(msg):
                     d_plate = parts[2]
                     d_pass = parts[3] if len(parts) > 3 else "gaz2026"
                     db_manager.add_driver(phone=d_phone, full_name=d_name, truck_plate=d_plate, password=d_pass, assigned_mfy="koksoy")
+                    # Clear in-memory active_driver_states so new driver starts strictly in WAITING mode
+                    clean_p = re.sub(r'\D', '', d_phone)[-9:]
+                    active_driver_states.pop(clean_p, None)
+                    for k in list(active_driver_states.keys()):
+                        if clean_p in k or k in clean_p:
+                            active_driver_states.pop(k, None)
                     user_sub.pop("admin_state", None)
                     save_subscribers(subs)
                     send_message(chat_id, f"✅ <b>HAYDOVCHI QO‘SHILDI!</b>\n👤 {d_name}\n📱 {d_phone}\n🚛 {d_plate}\n🔑 {d_pass}", parse_mode="HTML")
@@ -3077,6 +3083,12 @@ def handle_message(msg):
                 password=d_pass,
                 assigned_mfy="koksoy"
             )
+            # Clear in-memory active_driver_states so new driver starts strictly in WAITING mode
+            clean_p = re.sub(r'\D', '', d_phone)[-9:]
+            active_driver_states.pop(clean_p, None)
+            for k in list(active_driver_states.keys()):
+                if clean_p in k or k in clean_p:
+                    active_driver_states.pop(k, None)
 
             user_sub.pop("admin_state", None)
             user_sub.pop("new_d_name", None)
@@ -3663,9 +3675,9 @@ class AlertApiHandler(BaseHTTPRequestHandler):
             try:
                 qs = urllib.parse.urlparse(self.path).query
                 params = urllib.parse.parse_qs(qs)
-                q_reg = params.get("region", ["qashqadaryo"])[0]
-                q_dist = params.get("district", ["nishon"])[0]
-                q_mfy = params.get("mfy", ["yangi_nishon"])[0]
+                q_reg = params.get("region", [""])[0].strip()
+                q_dist = params.get("district", [""])[0].strip()
+                q_mfy = params.get("mfy", [""])[0].strip()
 
                 def norm_key(s):
                     return re.sub(r'[^a-zA-Z0-9]', '', str(s or '')).lower()
@@ -3673,6 +3685,15 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 target_mfy = norm_key(q_mfy)
                 target_dist = norm_key(q_dist)
                 target_reg = norm_key(q_reg)
+
+                # Agar aholi hali manzil kiritmagan bo'lsa (yangi tozalangan holat), mutlaqo mashina ko'rsatilmasin!
+                if not target_mfy or target_mfy in ["none", "null", "undefined"]:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"status": "ok", "trucks": []}).encode("utf-8"))
+                    return
 
                 try:
                     db_trucks = db_manager.get_active_trucks(region=q_reg, district=q_dist, mfy=q_mfy)
@@ -3685,19 +3706,29 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 # 1. Add all live drivers currently in active_driver_states
                 for cp, ds in list(active_driver_states.items()):
                     st = str(ds.get("status", "")).strip().lower()
-                    if st in ["waiting", "idle", "paused", "stopped", "kutish"]:
+                    if st in ["waiting", "idle", "paused", "stopped", "kutish"] or not st:
                         continue
                     if ds.get("is_active", 1) == 0:
                         continue
                     if time.time() - ds.get("updated_at", 0) > 2700:
                         continue
 
+                    # GPS koordinatalari real mavjud bo'lishi shart (hech qachon default koordinata qo'yilmaydi)
+                    d_lat = ds.get("lat")
+                    d_lng = ds.get("lng")
+                    if d_lat is None or d_lng is None:
+                        continue
+
                     drv_mfy = norm_key(ds.get("mfy", ""))
                     drv_dist = norm_key(ds.get("district", ""))
-                    # Qat'iy MFY mosligi: boshqa MFYdagi mashina hech qachon chiqmasin
+                    drv_reg = norm_key(ds.get("region", ""))
+
+                    # Qat'iy MFY, tuman, viloyat mosligi: boshqa MFYdagi mashina hech qachon aholiga chiqmasin
                     if not target_mfy or not drv_mfy or target_mfy != drv_mfy:
                         continue
                     if target_dist and drv_dist and target_dist != drv_dist:
+                        continue
+                    if target_reg and drv_reg and target_reg != drv_reg:
                         continue
 
                     raw_phone = str(ds.get("phone", "") or ds.get("account_phone", ""))
@@ -3729,20 +3760,33 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                             "mfy": ds.get("mfy", q_mfy),
                             "district": ds.get("district", q_dist),
                             "region": ds.get("region", q_reg),
-                            "lat": float(ds.get("lat", 38.6850)),
-                            "lng": float(ds.get("lng", 65.6800)),
+                            "lat": float(d_lat),
+                            "lng": float(d_lng),
                             "avatar_url": av_u
                         })
                         seen_plates.add(pl_clean)
 
-                # 2. Add from db_trucks (strictly exclude waiting / idle drivers)
+                # 2. Add from db_trucks (strictly exclude waiting / idle drivers and drivers without real GPS)
                 for dt in db_trucks:
                     dt_st = str(dt.get("status", "")).strip().lower()
-                    if dt_st in ["waiting", "idle", "paused", "stopped", "kutish"]:
+                    if dt_st in ["waiting", "idle", "paused", "stopped", "kutish"] or not dt_st:
                         continue
+                    dt_lat = dt.get("lat")
+                    dt_lng = dt.get("lng")
+                    if dt_lat is None or dt_lng is None:
+                        continue
+
                     dt_mfy = norm_key(dt.get("live_mfy") or dt.get("assigned_mfy") or dt.get("mfy", ""))
+                    dt_dist = norm_key(dt.get("live_dist") or dt.get("assigned_district") or dt.get("district", ""))
+                    dt_reg = norm_key(dt.get("live_reg") or dt.get("assigned_region") or dt.get("region", ""))
+
                     if not target_mfy or not dt_mfy or target_mfy != dt_mfy:
                         continue
+                    if target_dist and dt_dist and target_dist != dt_dist:
+                        continue
+                    if target_reg and dt_reg and target_reg != dt_reg:
+                        continue
+
                     dt_plate = str(dt.get("truck_plate", "")).strip()
                     dt_phone = str(dt.get("phone", ""))
                     pl_clean = re.sub(r'\s+', '', dt_plate).upper() if dt_plate else re.sub(r'\D', '', dt_phone)
@@ -3766,8 +3810,8 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                             "mfy": dt.get("live_mfy") or dt.get("assigned_mfy", q_mfy),
                             "district": dt.get("live_dist") or dt.get("assigned_district", q_dist),
                             "region": dt.get("live_reg") or dt.get("assigned_region", q_reg),
-                            "lat": float(dt.get("lat", 38.6850)),
-                            "lng": float(dt.get("lng", 65.6800)),
+                            "lat": float(dt_lat),
+                            "lng": float(dt_lng),
                             "avatar_url": dt_av
                         })
                         seen_plates.add(pl_clean)
@@ -4549,6 +4593,65 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
             return
 
+        # 5.5 SET DRIVER STATUS (e.g. 'waiting' or 'arrived')
+        if self.path == "/api/set-driver-status":
+            try:
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                body = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
+                data = json.loads(body)
+                phone = str(data.get("account_phone") or data.get("driver_phone") or data.get("phone", "")).strip()
+                clean_p = re.sub(r'\D', '', phone)[-9:]
+                stat = str(data.get("status") or "waiting").strip().lower()
+                stg = str(data.get("stage") or "collect").strip().lower()
+                reg_k = data.get("region")
+                dist_k = data.get("district")
+                mfy_k = data.get("mfy")
+                st_k = data.get("street")
+                st_n = data.get("street_name")
+
+                if stat in ["waiting", "idle", "paused", "stopped", "kutish"]:
+                    stat = "waiting"
+
+                if clean_p and clean_p in active_driver_states:
+                    active_driver_states[clean_p]["status"] = stat
+                    active_driver_states[clean_p]["stage"] = stg
+                    if stat == "waiting":
+                        active_driver_states[clean_p]["lat"] = None
+                        active_driver_states[clean_p]["lng"] = None
+                    if reg_k: active_driver_states[clean_p]["region"] = reg_k
+                    if dist_k: active_driver_states[clean_p]["district"] = dist_k
+                    if mfy_k: active_driver_states[clean_p]["mfy"] = mfy_k
+                    if st_k: active_driver_states[clean_p]["street"] = st_k
+                    if st_n: active_driver_states[clean_p]["street_name"] = st_n
+                    active_driver_states[clean_p]["updated_at"] = time.time()
+
+                if phone:
+                    db_manager.upsert_driver_live(
+                        phone=phone,
+                        status=stat,
+                        stage=stg,
+                        region=reg_k,
+                        district=dist_k,
+                        mfy=mfy_k,
+                        street=st_k,
+                        street_name=st_n,
+                        lat=None if stat == "waiting" else None,
+                        lng=None if stat == "waiting" else None
+                    )
+
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": True, "status": stat}).encode("utf-8"))
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
+            return
+
         # 6. DRIVER LIVE LOCATION & TELEMETRY UPDATE (GPS & Multi-driver state)
         if self.path == "/api/driver/location" or self.path == "/api/driver/telemetry":
             try:
@@ -4559,21 +4662,6 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 contact_p = str(data.get("contact_phone") or data.get("driver_phone") or phone).strip()
                 clean_p = re.sub(r'\D', '', phone)[-9:] or "unknown"
                 clean_contact = re.sub(r'\D', '', contact_p)[-9:] or clean_p
-                
-                lat = float(data.get("lat", 38.665))
-                lng = float(data.get("lng", 65.698))
-                stat = data.get("status", "arrived")
-                stg = data.get("stage", "collect")
-                reg_k = data.get("region", "qashqadaryo")
-                dist_k = data.get("district", "nishon")
-                mfy_k = data.get("mfy", "kok_soy")
-                st_k = data.get("street", "istiqlol")
-                st_n = data.get("street_name", "Istiqlol ko‘chasi")
-                drv_n = data.get("driver_name", "Ahror Suyunov")
-                t_plate = data.get("truck_plate") or data.get("plate") or (db_driver.get("truck_plate") if db_driver else "") or ""
-                t_model = data.get("truck_model", "Isuzu NPR 75")
-                t_color = data.get("truck_color", "Oq (Sariq chiziqli)")
-                avatar_u = data.get("avatar_url", "")
 
                 # Check if driver exists in DB
                 db_driver = db_manager.get_driver_by_phone(phone) or db_manager.get_driver_by_phone(contact_p)
@@ -4602,11 +4690,42 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                     self.wfile.write(json.dumps({"ok": False, "deleted": True, "message": "Haydovchi faol emas"}).encode("utf-8"))
                     return
 
-                final_telemetry_av = avatar_u or (db_driver.get("avatar_url") if db_driver else "") or ""
+                # Parse real GPS coordinates safely (NEVER fallback to Nishon or fake coords!)
+                lat = None
+                lng = None
+                raw_lat = data.get("lat")
+                raw_lng = data.get("lng")
+                if raw_lat is not None and raw_lng is not None:
+                    try:
+                        lat = float(raw_lat)
+                        lng = float(raw_lng)
+                    except (ValueError, TypeError):
+                        lat = None
+                        lng = None
+
+                stat = str(data.get("status") or "arrived").strip().lower()
+                stg = str(data.get("stage") or "collect").strip().lower()
+                reg_k = data.get("region") or db_driver.get("assigned_region") or "qashqadaryo"
+                dist_k = data.get("district") or db_driver.get("assigned_district") or "nishon"
+                mfy_k = data.get("mfy") or db_driver.get("assigned_mfy") or "koksoy"
+                st_k = data.get("street") or "istiqlol"
+                st_n = data.get("street_name") or "Istiqlol ko‘chasi"
+                drv_n = data.get("driver_name") or db_driver.get("full_name") or "Haydovchi"
+                t_plate = data.get("truck_plate") or data.get("plate") or db_driver.get("truck_plate") or ""
+                t_model = data.get("truck_model") or db_driver.get("truck_model") or "Isuzu NPR 75"
+                t_color = data.get("truck_color") or db_driver.get("truck_color") or "Oq (Sariq chiziqli)"
+                avatar_u = data.get("avatar_url") or db_driver.get("avatar_url") or ""
+
+                final_telemetry_av = avatar_u
                 if final_telemetry_av.startswith("/"):
                     final_telemetry_av = f"https://xonadon-plus-server.onrender.com{final_telemetry_av}"
 
-                # Update live in-memory registry
+                # Agar kutish holatida bo'lsa, koordinatalar null qilinadi
+                if stat in ["waiting", "idle", "paused", "stopped", "kutish"]:
+                    stat = "waiting"
+                    lat = None
+                    lng = None
+
                 active_state_obj = {
                     "phone": contact_p,
                     "account_phone": phone,
@@ -4647,7 +4766,7 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                     mfy=mfy_k,
                     street=st_k,
                     street_name=st_n,
-                    avatar_url=avatar_u
+                    avatar_url=final_telemetry_av
                 )
 
                 self.send_response(200)
