@@ -2649,10 +2649,10 @@ current_driver_state = {
     "stage": "collect",
     "status": "arrived",
     "truck_model": "Isuzu NPR 75",
-    "truck_plate": "30 782 AGA",
+    "truck_plate": "",
     "truck_color": "Oq (Sariq chiziqli)",
-    "driver_name": "Islomov Javohir",
-    "driver_phone": "+998 (90) 123-45-67",
+    "driver_name": "",
+    "driver_phone": "",
     "last_address_text": "Qashqadaryo viloyati, Nishon tumani, «Yangi Nishon» MFY, Istiqlol ko‘chasi",
     "last_alert_time": None
 }
@@ -3414,10 +3414,20 @@ def handle_callback(cb):
         phone_to_del = data.split("confdel_")[1].strip()
         db_manager.delete_driver(phone_to_del)
         clean_del = re.sub(r'\D', '', str(phone_to_del))
+        clean_del_last9 = clean_del[-9:] if len(clean_del) >= 9 else clean_del
+
+        # Purge deleted driver from memory registry
+        for k in list(active_driver_states.keys()):
+            clean_k = re.sub(r'\D', '', str(k))
+            if clean_del and (clean_del == clean_k or clean_del_last9 in clean_k or clean_k in clean_del):
+                active_driver_states.pop(k, None)
+
         clean_cur = re.sub(r'\D', '', str(current_driver_state.get('driver_phone', '')))
         if clean_del and clean_cur and clean_del[-9:] == clean_cur[-9:]:
             current_driver_state['status'] = 'waiting'
             current_driver_state['is_active'] = 0
+            current_driver_state['truck_plate'] = ''
+            current_driver_state['driver_name'] = ''
         edit_message_text(
             chat_id, msg_id,
             f"✅ <b>Haydovchi ({safe_html(phone_to_del)}) tizimdan butunlay o‘chirildi!</b>\nUning hisobi va kirish ruxsatnomasi bekor qilindi.",
@@ -3455,10 +3465,20 @@ def handle_callback(cb):
         phone_to_del = data.split("confdel_")[1].strip()
         db_manager.delete_driver(phone_to_del)
         clean_del = re.sub(r'\D', '', str(phone_to_del))
+        clean_del_last9 = clean_del[-9:] if len(clean_del) >= 9 else clean_del
+
+        # Purge deleted driver from memory registry
+        for k in list(active_driver_states.keys()):
+            clean_k = re.sub(r'\D', '', str(k))
+            if clean_del and (clean_del == clean_k or clean_del_last9 in clean_k or clean_k in clean_del):
+                active_driver_states.pop(k, None)
+
         clean_cur = re.sub(r'\D', '', str(current_driver_state.get('driver_phone', '')))
         if clean_del and clean_cur and clean_del[-9:] == clean_cur[-9:]:
             current_driver_state['status'] = 'waiting'
             current_driver_state['is_active'] = 0
+            current_driver_state['truck_plate'] = ''
+            current_driver_state['driver_name'] = ''
         edit_message_text(
             chat_id, msg_id,
             f"✅ <b>Haydovchi ({safe_html(phone_to_del)}) tizimdan butunlay o‘chirildi!</b>\nUning hisobi va kirish ruxsatnomasi bekor qilindi.",
@@ -4480,9 +4500,30 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 t_color = data.get("truck_color", "Oq (Sariq chiziqli)")
                 avatar_u = data.get("avatar_url", "")
 
-                # Check if driver deactivated in DB
+                # Check if driver deactivated or deleted in DB
                 db_driver = db_manager.get_driver_by_phone(phone)
-                is_active = db_driver.get("is_active", 1) if db_driver else 1
+                if not db_driver:
+                    # Driver was deleted from bot or not registered!
+                    active_driver_states.pop(clean_p, None)
+                    for k in list(active_driver_states.keys()):
+                        if clean_p in k or k in clean_p:
+                            active_driver_states.pop(k, None)
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"ok": False, "message": "Haydovchi tizimda topilmadi yoki o‘chirilgan"}).encode("utf-8"))
+                    return
+
+                is_active = db_driver.get("is_active", 1)
+                if not is_active:
+                    active_driver_states.pop(clean_p, None)
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"ok": False, "message": "Haydovchi faol emas"}).encode("utf-8"))
+                    return
 
                 # Update live in-memory registry
                 active_driver_states[clean_p] = {

@@ -149,18 +149,23 @@ def init_db():
         ('+998901234567', 'Islomov Javohir', 'driver', 'qashqadaryo', 'nishon', 'koksoy', 'koksoy_markaziy', '1-uy');
         """)
 
+    # Clean up any lingering mock seed drivers
+    try:
+        cursor.execute("DELETE FROM drivers WHERE phone LIKE '%901234567%' OR truck_plate LIKE '%30 782 AGA%';")
+        cursor.execute("DELETE FROM driver_live WHERE phone LIKE '%901234567%' OR truck_plate LIKE '%30 782 AGA%';")
+    except Exception:
+        pass
+
     cursor.execute("SELECT COUNT(*) as cnt FROM drivers;")
     if cursor.fetchone()["cnt"] == 0:
         cursor.execute("""
         INSERT INTO drivers (phone, full_name, truck_model, truck_plate, truck_color, assigned_region, assigned_district, assigned_mfy, password)
         VALUES 
-        ('+998901234567', 'Islomov Javohir', 'Isuzu NPR 75', '30 782 AGA', 'Oq (Sariq chiziqli)', 'qashqadaryo', 'nishon', 'koksoy', 'gaz2026'),
         ('+998940401009', 'Ahror Suyunov', 'Isuzu NPR 75', '70 M 260 EB', 'Oq (Sariq chiziqli)', 'qashqadaryo', 'nishon', 'koksoy', 'ahrorbek2005');
         """)
         cursor.execute("""
         INSERT OR REPLACE INTO driver_live (phone, driver_name, truck_plate, truck_model, truck_color, status, stage, lat, lng, region, district, mfy, street, street_name)
         VALUES 
-        ('+998901234567', 'Islomov Javohir', '30 782 AGA', 'Isuzu NPR 75', 'Oq (Sariq chiziqli)', 'working', 'collect', 38.665, 65.698, 'qashqadaryo', 'nishon', 'koksoy', 'koksoy_markaziy', 'Ko‘ksoy markaziy ko‘chasi'),
         ('+998940401009', 'Ahror Suyunov', '70 M 260 EB', 'Isuzu NPR 75', 'Oq (Sariq chiziqli)', 'working', 'collect', 38.665, 65.698, 'qashqadaryo', 'nishon', 'koksoy', 'koksoy_markaziy', 'Ko‘ksoy markaziy ko‘chasi');
         """)
 
@@ -301,7 +306,10 @@ def add_driver(phone, full_name, truck_plate, password='gaz2026', truck_model='I
 def get_driver_by_phone(phone):
     conn = get_connection()
     c = conn.cursor()
-    c.execute("SELECT * FROM drivers WHERE phone = ? AND is_active = 1", (phone.strip(),))
+    raw = str(phone or '').strip()
+    digits = re.sub(r'\D', '', raw)
+    last9 = digits[-9:] if len(digits) >= 9 else digits
+    c.execute("SELECT * FROM drivers WHERE (phone = ? OR phone LIKE ? OR phone LIKE ?) AND is_active = 1", (raw, f"%{last9}%", f"%{digits}%"))
     row = c.fetchone()
     conn.close()
     return dict(row) if row else None
@@ -309,7 +317,7 @@ def get_driver_by_phone(phone):
 def get_all_drivers():
     conn = get_connection()
     c = conn.cursor()
-    c.execute("SELECT * FROM drivers ORDER BY id DESC")
+    c.execute("SELECT * FROM drivers WHERE is_active = 1 ORDER BY id DESC")
     rows = c.fetchall()
     conn.close()
     return [dict(r) for r in rows]
@@ -317,8 +325,11 @@ def get_all_drivers():
 def delete_driver(phone):
     conn = get_connection()
     c = conn.cursor()
-    c.execute("DELETE FROM drivers WHERE phone = ?", (phone.strip(),))
-    c.execute("DELETE FROM driver_live WHERE phone = ?", (phone.strip(),))
+    raw = str(phone or '').strip()
+    digits = re.sub(r'\D', '', raw)
+    last9 = digits[-9:] if len(digits) >= 9 else digits
+    c.execute("DELETE FROM drivers WHERE phone = ? OR phone LIKE ? OR phone LIKE ?", (raw, f"%{last9}%", f"%{digits}%"))
+    c.execute("DELETE FROM driver_live WHERE phone = ? OR phone LIKE ? OR phone LIKE ?", (raw, f"%{last9}%", f"%{digits}%"))
     conn.commit()
     conn.close()
     return True
