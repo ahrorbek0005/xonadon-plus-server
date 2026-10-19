@@ -156,28 +156,8 @@ def init_db():
     except Exception:
         pass
 
-    cursor.execute("SELECT COUNT(*) as cnt FROM drivers;")
-    if cursor.fetchone()["cnt"] == 0:
-        cursor.execute("""
-        INSERT INTO drivers (phone, full_name, truck_model, truck_plate, truck_color, assigned_region, assigned_district, assigned_mfy, password)
-        VALUES 
-        ('+998940401009', 'Ahror Suyunov', 'Isuzu NPR 75', '70 M 260 EB', 'Oq (Sariq chiziqli)', 'qashqadaryo', 'nishon', 'koksoy', 'ahrorbek2005');
-        """)
-        cursor.execute("""
-        INSERT OR REPLACE INTO driver_live (phone, driver_name, truck_plate, truck_model, truck_color, status, stage, lat, lng, region, district, mfy, street, street_name)
-        VALUES 
-        ('+998940401009', 'Ahror Suyunov', '70 M 260 EB', 'Isuzu NPR 75', 'Oq (Sariq chiziqli)', 'working', 'collect', 38.665, 65.698, 'qashqadaryo', 'nishon', 'koksoy', 'koksoy_markaziy', 'Ko‘ksoy markaziy ko‘chasi');
-        """)
-
-    # Ensure account_id columns exist for both users and drivers
-    try:
-        cursor.execute("ALTER TABLE users ADD COLUMN account_id TEXT;")
-    except Exception:
-        pass
-    try:
-        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_account_id ON users(account_id);")
-    except Exception:
-        pass
+    # Mock driver auto-seed completely disabled to allow full clean driver deletion
+    pass
 
     try:
         cursor.execute("ALTER TABLE drivers ADD COLUMN account_id TEXT;")
@@ -278,6 +258,7 @@ def add_driver(phone, full_name, truck_plate, password='gaz2026', truck_model='I
     clean_p = phone.strip()
     conn = get_connection()
     c = conn.cursor()
+
     c.execute("SELECT account_id FROM drivers WHERE phone = ?", (clean_p,))
     row = c.fetchone()
     account_id = row["account_id"] if row and row["account_id"] else generate_unique_account_id("XP-")
@@ -322,14 +303,42 @@ def get_all_drivers():
     conn.close()
     return [dict(r) for r in rows]
 
+def is_driver_deleted(phone):
+    # Blacklist yo'q: shunchaki drivers jadvalida mavjud yoki mavjud emasligi tekshiriladi
+    if not phone:
+        return False
+    driver = get_driver_by_phone(phone)
+    return driver is None
+
 def delete_driver(phone):
     conn = get_connection()
     c = conn.cursor()
     raw = str(phone or '').strip()
     digits = re.sub(r'\D', '', raw)
     last9 = digits[-9:] if len(digits) >= 9 else digits
-    c.execute("DELETE FROM drivers WHERE phone = ? OR phone LIKE ? OR phone LIKE ?", (raw, f"%{last9}%", f"%{digits}%"))
-    c.execute("DELETE FROM driver_live WHERE phone = ? OR phone LIKE ? OR phone LIKE ?", (raw, f"%{last9}%", f"%{digits}%"))
+    pattern_last9 = f"%{last9}%"
+    pattern_digits = f"%{digits}%"
+
+    # 1. Delete from drivers table
+    c.execute("DELETE FROM drivers WHERE phone = ? OR phone LIKE ? OR phone LIKE ?", (raw, pattern_last9, pattern_digits))
+
+    # 2. Delete from driver_live table
+    c.execute("DELETE FROM driver_live WHERE phone = ? OR phone LIKE ? OR phone LIKE ?", (raw, pattern_last9, pattern_digits))
+
+    # 3. Delete from users table (including 2FA password, 2FA hint, and account_id)
+    c.execute("DELETE FROM users WHERE phone = ? OR phone LIKE ? OR phone LIKE ?", (raw, pattern_last9, pattern_digits))
+
+    # 4. Terminate and delete all sessions immediately
+    c.execute("DELETE FROM sessions WHERE phone = ? OR phone LIKE ? OR phone LIKE ?", (raw, pattern_last9, pattern_digits))
+
+    # 5. Delete uploaded avatars
+    try:
+        c.execute("DELETE FROM avatars WHERE phone = ? OR phone LIKE ? OR phone LIKE ?", (raw, pattern_last9, pattern_digits))
+    except Exception:
+        pass
+
+    # No blacklist: barcha ma'lumotlar o'chiriladi, admin xohlagan payt qayta qo'shishi mumkin
+
     conn.commit()
     conn.close()
     return True

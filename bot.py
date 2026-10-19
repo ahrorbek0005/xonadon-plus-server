@@ -4431,6 +4431,19 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 ip = data.get("ip", self.client_address[0])
 
                 if dev_id and phone:
+                    role = data.get("role", "")
+                    if role == "driver" and not db_manager.get_driver_by_phone(phone):
+                        self.send_response(200)
+                        self.send_header("Content-Type", "application/json")
+                        self.send_header("Access-Control-Allow-Origin", "*")
+                        self.end_headers()
+                        self.wfile.write(json.dumps({
+                            "ok": False,
+                            "is_active": False,
+                            "deleted": True,
+                            "message": "Haydovchi hisobi tizimda topilmadi!"
+                        }).encode("utf-8"))
+                        return
                     db_manager.update_or_create_session(dev_id, phone, dev_name, os_name, ip)
 
                 is_active = db_manager.check_session_active(dev_id) if dev_id else True
@@ -4519,12 +4532,12 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 st_k = data.get("street", "istiqlol")
                 st_n = data.get("street_name", "Istiqlol ko‘chasi")
                 drv_n = data.get("driver_name", "Ahror Suyunov")
-                t_plate = data.get("truck_plate") or data.get("plate", "70 M 260 EB")
+                t_plate = data.get("truck_plate") or data.get("plate") or ""
                 t_model = data.get("truck_model", "Isuzu NPR 75")
                 t_color = data.get("truck_color", "Oq (Sariq chiziqli)")
                 avatar_u = data.get("avatar_url", "")
 
-                # Check if driver deactivated or deleted in DB
+                # Check if driver exists in DB
                 db_driver = db_manager.get_driver_by_phone(phone) or db_manager.get_driver_by_phone(contact_p)
                 if not db_driver:
                     # Driver was deleted from bot or not registered!
@@ -4707,7 +4720,7 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                     "phone": contact_p,
                     "account_phone": phone,
                     "driver_name": data.get("driver_name") or existing.get("driver_name", "Ahror Suyunov"),
-                    "truck_plate": data.get("truck_plate") or data.get("plate") or existing.get("truck_plate", "70 M 260 EB"),
+                    "truck_plate": data.get("truck_plate") or data.get("plate") or existing.get("truck_plate", ""),
                     "truck_model": data.get("truck_model") or existing.get("truck_model", "Isuzu NPR 75"),
                     "truck_color": data.get("truck_color") or existing.get("truck_color", "Oq (Sariq chiziqli)"),
                     "status": new_status,
