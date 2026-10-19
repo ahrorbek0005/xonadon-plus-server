@@ -3704,6 +3704,9 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                     if pl_clean not in seen_plates:
                         raw_phone = str(ds.get("phone", ""))
                         clean_phone_id = re.sub(r'\D', '', raw_phone)[-7:] or "truck"
+                        av_u = ds.get("avatar_url") or ""
+                        if av_u.startswith("/"):
+                            av_u = "https://xonadon-plus-server.onrender.com" + av_u
                         response_trucks.append({
                             "id": f"drv_{clean_phone_id}",
                             "name": ds.get("driver_name", "Ahror Suyunov"),
@@ -3712,6 +3715,7 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                             "plate": ds.get("truck_plate", ""),
                             "color": ds.get("truck_color", "Oq (Sariq chiziqli)"),
                             "status": ds.get("status", "arrived"),
+                            "stage": ds.get("stage", "collect"),
                             "street": ds.get("street", "istiqlol"),
                             "street_name": ds.get("street_name", "Istiqlol ko‘chasi"),
                             "mfy": ds.get("mfy", q_mfy),
@@ -3719,7 +3723,7 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                             "region": ds.get("region", q_reg),
                             "lat": float(ds.get("lat", 38.6850)),
                             "lng": float(ds.get("lng", 65.6800)),
-                            "avatar_url": ds.get("avatar_url") or ""
+                            "avatar_url": av_u
                         })
                         seen_plates.add(pl_clean)
 
@@ -3732,6 +3736,9 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                     if pl_clean not in seen_plates:
                         dt_phone = str(dt.get("phone", ""))
                         dt_phone_clean = re.sub(r'\D', '', dt_phone)[-7:] or "truck"
+                        dt_av = dt.get("avatar_url") or ""
+                        if dt_av.startswith("/"):
+                            dt_av = "https://xonadon-plus-server.onrender.com" + dt_av
                         response_trucks.append({
                             "id": f"drv_{dt_phone_clean}",
                             "name": dt.get("full_name") or dt.get("driver_name", "Haydovchi"),
@@ -3740,6 +3747,7 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                             "plate": dt.get("truck_plate", ""),
                             "color": dt.get("truck_color", "Oq"),
                             "status": dt.get("status", "arrived"),
+                            "stage": dt.get("stage", "collect"),
                             "street": dt.get("street", "istiqlol"),
                             "street_name": dt.get("street_name", "Istiqlol ko‘chasi"),
                             "mfy": dt.get("live_mfy") or dt.get("assigned_mfy", q_mfy),
@@ -3747,7 +3755,7 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                             "region": dt.get("live_reg") or dt.get("assigned_region", q_reg),
                             "lat": float(dt.get("lat", 38.6850)),
                             "lng": float(dt.get("lng", 65.6800)),
-                            "avatar_url": dt.get("avatar_url") or ""
+                            "avatar_url": dt_av
                         })
                         seen_plates.add(pl_clean)
 
@@ -3878,20 +3886,30 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                     try:
                         with open(filepath, "wb") as f:
                             f.write(base64.b64decode(encoded))
-                        avatar_url = f"/uploads/avatars/{filename}"
+                        avatar_url = f"https://xonadon-plus-server.onrender.com/uploads/avatars/{filename}"
                     except Exception as err:
                         print("Avatar file write failed, using data URL:", err)
                         avatar_url = image_data
 
-                db_manager.save_user_avatar(phone, role, avatar_url or image_data)
+                final_avatar_url = avatar_url or image_data
+                if final_avatar_url.startswith("/"):
+                    final_avatar_url = f"https://xonadon-plus-server.onrender.com{final_avatar_url}"
+
+                db_manager.save_user_avatar(phone, role, final_avatar_url)
                 if role == "driver":
-                    current_driver_state["avatar_url"] = avatar_url or image_data
+                    current_driver_state["avatar_url"] = final_avatar_url
+                    clean_full = re.sub(r'\D', '', phone)
+                    clean_short = clean_full[-9:] if len(clean_full) >= 9 else clean_full
+                    if clean_full in active_driver_states:
+                        active_driver_states[clean_full]["avatar_url"] = final_avatar_url
+                    if clean_short in active_driver_states:
+                        active_driver_states[clean_short]["avatar_url"] = final_avatar_url
 
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
-                self.wfile.write(json.dumps({"status": "ok", "avatar_url": avatar_url or image_data}).encode("utf-8"))
+                self.wfile.write(json.dumps({"status": "ok", "avatar_url": final_avatar_url}).encode("utf-8"))
                 return
             except Exception as e:
                 print("Error in /api/upload-avatar:", e)
@@ -4486,8 +4504,10 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 length = int(self.headers.get("Content-Length", 0) or 0)
                 body = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
                 data = json.loads(body)
-                phone = str(data.get("phone", "+998901234567")).strip()
+                phone = str(data.get("account_phone") or data.get("phone", "+998901234567")).strip()
+                contact_p = str(data.get("contact_phone") or data.get("driver_phone") or phone).strip()
                 clean_p = re.sub(r'\D', '', phone)[-9:] or "unknown"
+                clean_contact = re.sub(r'\D', '', contact_p)[-9:] or clean_p
                 
                 lat = float(data.get("lat", 38.665))
                 lng = float(data.get("lng", 65.698))
@@ -4505,10 +4525,11 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 avatar_u = data.get("avatar_url", "")
 
                 # Check if driver deactivated or deleted in DB
-                db_driver = db_manager.get_driver_by_phone(phone)
+                db_driver = db_manager.get_driver_by_phone(phone) or db_manager.get_driver_by_phone(contact_p)
                 if not db_driver:
                     # Driver was deleted from bot or not registered!
                     active_driver_states.pop(clean_p, None)
+                    active_driver_states.pop(clean_contact, None)
                     for k in list(active_driver_states.keys()):
                         if clean_p in k or k in clean_p:
                             active_driver_states.pop(k, None)
@@ -4516,22 +4537,28 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                     self.send_header("Content-Type", "application/json")
                     self.send_header("Access-Control-Allow-Origin", "*")
                     self.end_headers()
-                    self.wfile.write(json.dumps({"ok": False, "message": "Haydovchi tizimda topilmadi yoki o‘chirilgan"}).encode("utf-8"))
+                    self.wfile.write(json.dumps({"ok": False, "deleted": True, "message": "Haydovchi tizimda topilmadi yoki o‘chirilgan"}).encode("utf-8"))
                     return
 
                 is_active = db_driver.get("is_active", 1)
                 if not is_active:
                     active_driver_states.pop(clean_p, None)
+                    active_driver_states.pop(clean_contact, None)
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
                     self.send_header("Access-Control-Allow-Origin", "*")
                     self.end_headers()
-                    self.wfile.write(json.dumps({"ok": False, "message": "Haydovchi faol emas"}).encode("utf-8"))
+                    self.wfile.write(json.dumps({"ok": False, "deleted": True, "message": "Haydovchi faol emas"}).encode("utf-8"))
                     return
 
+                final_telemetry_av = avatar_u or (db_driver.get("avatar_url") if db_driver else "") or ""
+                if final_telemetry_av.startswith("/"):
+                    final_telemetry_av = f"https://xonadon-plus-server.onrender.com{final_telemetry_av}"
+
                 # Update live in-memory registry
-                active_driver_states[clean_p] = {
-                    "phone": phone,
+                active_state_obj = {
+                    "phone": contact_p,
+                    "account_phone": phone,
                     "driver_name": drv_n,
                     "truck_plate": t_plate,
                     "truck_model": t_model,
@@ -4545,10 +4572,13 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                     "street_name": st_n,
                     "lat": lat,
                     "lng": lng,
-                    "avatar_url": avatar_u or (db_driver.get("avatar_url") if db_driver else "") or "",
+                    "avatar_url": final_telemetry_av,
                     "is_active": is_active,
                     "updated_at": time.time()
                 }
+                active_driver_states[clean_p] = active_state_obj
+                if clean_contact != clean_p:
+                    active_driver_states[clean_contact] = active_state_obj
 
                 # Update database
                 db_manager.upsert_driver_live(
@@ -4651,8 +4681,10 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 length = int(self.headers.get("Content-Length", 0) or 0)
                 body = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
                 data = json.loads(body)
-                phone = str(data.get("driver_phone") or data.get("phone", "+998901234567")).strip()
+                phone = str(data.get("account_phone") or data.get("phone", "+998901234567")).strip()
+                contact_p = str(data.get("contact_phone") or data.get("driver_phone") or phone).strip()
                 clean_p = re.sub(r'\D', '', phone)[-9:] or "unknown"
+                clean_contact = re.sub(r'\D', '', contact_p)[-9:] or clean_p
                 new_status = data.get("status", "arrived")
                 
                 # Update current_driver_state
@@ -4663,16 +4695,17 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 if "mfy" in data: current_driver_state["mfy"] = data["mfy"]
                 if "stage" in data: current_driver_state["stage"] = data["stage"]
                 if "driver_name" in data: current_driver_state["driver_name"] = data["driver_name"]
-                if "driver_phone" in data: current_driver_state["driver_phone"] = data["driver_phone"]
+                if "driver_phone" in data: current_driver_state["driver_phone"] = contact_p
                 if "plate" in data: current_driver_state["truck_plate"] = data["plate"]
                 if "truck_plate" in data: current_driver_state["truck_plate"] = data["truck_plate"]
                 if "truck_model" in data: current_driver_state["truck_model"] = data["truck_model"]
                 if "truck_color" in data: current_driver_state["truck_color"] = data["truck_color"]
 
                 # Update in active_driver_states
-                existing = active_driver_states.get(clean_p, {})
+                existing = active_driver_states.get(clean_p) or active_driver_states.get(clean_contact, {})
                 existing.update({
-                    "phone": phone,
+                    "phone": contact_p,
+                    "account_phone": phone,
                     "driver_name": data.get("driver_name") or existing.get("driver_name", "Ahror Suyunov"),
                     "truck_plate": data.get("truck_plate") or data.get("plate") or existing.get("truck_plate", "70 M 260 EB"),
                     "truck_model": data.get("truck_model") or existing.get("truck_model", "Isuzu NPR 75"),
@@ -4686,7 +4719,16 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                     "street_name": data.get("street_name") or existing.get("street_name", "Istiqlol ko‘chasi"),
                     "updated_at": time.time()
                 })
+                if "avatar_url" in data and data["avatar_url"]:
+                    existing["avatar_url"] = data["avatar_url"]
+                    current_driver_state["avatar_url"] = data["avatar_url"]
+                elif not existing.get("avatar_url"):
+                    av = db_manager.get_user_avatar(phone, "driver") or db_manager.get_user_avatar(contact_p, "driver")
+                    if av:
+                        existing["avatar_url"] = av
                 active_driver_states[clean_p] = existing
+                if clean_contact != clean_p:
+                    active_driver_states[clean_contact] = existing
 
                 # Also save to DB
                 db_manager.upsert_driver_live(

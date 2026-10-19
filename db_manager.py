@@ -637,9 +637,17 @@ def upsert_driver_live(phone, driver_name, truck_plate, truck_model, truck_color
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     """, (phone, driver_name, truck_plate, truck_model, truck_color, status, stage, float(lat), float(lng), region, district, mfy, street, street_name))
     
-    if mfy:
-        c.execute("UPDATE drivers SET assigned_mfy = ?, assigned_district = COALESCE(?, assigned_district), assigned_region = COALESCE(?, assigned_region) WHERE phone LIKE ?", 
-                  (mfy, district, region, f"%{clean_p[-9:]}%"))
+    c.execute("""
+        UPDATE drivers 
+        SET full_name = COALESCE(NULLIF(?, ''), full_name),
+            truck_plate = COALESCE(NULLIF(?, ''), truck_plate),
+            truck_model = COALESCE(NULLIF(?, ''), truck_model),
+            truck_color = COALESCE(NULLIF(?, ''), truck_color),
+            assigned_mfy = COALESCE(NULLIF(?, ''), assigned_mfy),
+            assigned_district = COALESCE(NULLIF(?, ''), assigned_district),
+            assigned_region = COALESCE(NULLIF(?, ''), assigned_region)
+        WHERE phone LIKE ?
+    """, (driver_name, truck_plate, truck_model, truck_color, mfy, district, region, f"%{clean_p[-9:]}%"))
                   
     conn.commit()
     conn.close()
@@ -657,7 +665,11 @@ def get_active_trucks(region=None, district=None, mfy=None):
     target_reg = norm(region)
     
     c.execute("""
-        SELECT d.phone, d.full_name, d.truck_model, d.truck_plate, d.truck_color,
+        SELECT d.phone, 
+               COALESCE(NULLIF(l.driver_name, ''), d.full_name) as full_name, 
+               COALESCE(NULLIF(l.truck_model, ''), d.truck_model) as truck_model, 
+               COALESCE(NULLIF(l.truck_plate, ''), d.truck_plate) as truck_plate, 
+               COALESCE(NULLIF(l.truck_color, ''), d.truck_color) as truck_color,
                d.assigned_region, d.assigned_district, d.assigned_mfy, d.avatar_url,
                COALESCE(l.lat, 38.685) as lat,
                COALESCE(l.lng, 65.680) as lng,
