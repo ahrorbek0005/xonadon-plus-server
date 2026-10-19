@@ -3640,97 +3640,106 @@ class AlertApiHandler(BaseHTTPRequestHandler):
 
         # --- REAL-TIME ACTIVE TRUCKS FOR CITIZEN MAP & CARDS ---
         if self.path.startswith("/api/active-trucks") or self.path.startswith("/api/get-active-trucks"):
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.end_headers()
+            try:
+                qs = urllib.parse.urlparse(self.path).query
+                params = urllib.parse.parse_qs(qs)
+                q_reg = params.get("region", ["qashqadaryo"])[0]
+                q_dist = params.get("district", ["nishon"])[0]
+                q_mfy = params.get("mfy", ["yangi_nishon"])[0]
 
-            qs = urllib.parse.urlparse(self.path).query
-            params = urllib.parse.parse_qs(qs)
-            q_reg = params.get("region", ["qashqadaryo"])[0]
-            q_dist = params.get("district", ["nishon"])[0]
-            q_mfy = params.get("mfy", ["yangi_nishon"])[0]
+                def norm_key(s):
+                    return re.sub(r'[^a-zA-Z0-9]', '', str(s or '')).lower()
 
-            def norm_key(s):
-                return re.sub(r'[^a-zA-Z0-9]', '', str(s or '')).lower()
+                target_mfy = norm_key(q_mfy)
+                target_dist = norm_key(q_dist)
+                target_reg = norm_key(q_reg)
 
-            target_mfy = norm_key(q_mfy)
-            target_dist = norm_key(q_dist)
-            target_reg = norm_key(q_reg)
+                try:
+                    db_trucks = db_manager.get_active_trucks(region=q_reg, district=q_dist, mfy=q_mfy)
+                except Exception as _dbe:
+                    db_trucks = []
 
-            db_trucks = db_manager.get_active_trucks(region=q_reg, district=q_dist, mfy=q_mfy)
+                response_trucks = []
+                seen_plates = set()
 
-            response_trucks = []
-            seen_plates = set()
+                # 1. Add all live drivers currently in active_driver_states
+                for cp, ds in list(active_driver_states.items()):
+                    st = str(ds.get("status", "")).lower()
+                    if st in ["waiting", "idle"]:
+                        continue
+                    if ds.get("is_active", 1) == 0:
+                        continue
+                    if time.time() - ds.get("updated_at", 0) > 2700:
+                        continue
 
-            # 1. Add all live drivers currently in active_driver_states that match MFY and are active
-            for cp, ds in list(active_driver_states.items()):
-                st = str(ds.get("status", "")).lower()
-                if st in ["waiting", "idle"]:
-                    continue
-                if ds.get("is_active", 1) == 0:
-                    continue
-                # Exclude stale drivers inactive > 45 minutes
-                if time.time() - ds.get("updated_at", 0) > 2700:
-                    continue
+                    drv_mfy = norm_key(ds.get("mfy", ""))
+                    drv_dist = norm_key(ds.get("district", ""))
+                    if target_mfy and drv_mfy and target_mfy != drv_mfy:
+                        continue
+                    if target_dist and drv_dist and target_dist != drv_dist:
+                        continue
 
-                drv_mfy = norm_key(ds.get("mfy", ""))
-                drv_dist = norm_key(ds.get("district", ""))
-                if target_mfy and drv_mfy and target_mfy != drv_mfy:
-                    continue
-                if target_dist and drv_dist and target_dist != drv_dist:
-                    continue
+                    pl_clean = re.sub(r'\s+', '', str(ds.get("truck_plate", ""))).upper()
+                    if pl_clean not in seen_plates:
+                        raw_phone = str(ds.get("phone", ""))
+                        clean_phone_id = re.sub(r'\D', '', raw_phone)[-7:] or "truck"
+                        response_trucks.append({
+                            "id": f"drv_{clean_phone_id}",
+                            "name": ds.get("driver_name", "Ahror Suyunov"),
+                            "phone": raw_phone,
+                            "model": ds.get("truck_model", "Isuzu NPR 75"),
+                            "plate": ds.get("truck_plate", ""),
+                            "color": ds.get("truck_color", "Oq (Sariq chiziqli)"),
+                            "status": ds.get("status", "arrived"),
+                            "street": ds.get("street", "istiqlol"),
+                            "street_name": ds.get("street_name", "Istiqlol ko‘chasi"),
+                            "mfy": ds.get("mfy", q_mfy),
+                            "district": ds.get("district", q_dist),
+                            "region": ds.get("region", q_reg),
+                            "lat": float(ds.get("lat", 38.6850)),
+                            "lng": float(ds.get("lng", 65.6800)),
+                            "avatar_url": ds.get("avatar_url") or ""
+                        })
+                        seen_plates.add(pl_clean)
 
-                pl_clean = re.sub(r'\s+', '', str(ds.get("truck_plate", ""))).upper()
-                if pl_clean not in seen_plates:
-                    raw_phone = str(ds.get("phone", ""))
-                    clean_phone_id = re.sub(r'\D', '', raw_phone)[-7:] or "truck"
-                    response_trucks.append({
-                        "id": f"drv_{clean_phone_id}",
-                        "name": ds.get("driver_name", "Ahror Suyunov"),
-                        "phone": raw_phone,
-                        "model": ds.get("truck_model", "Isuzu NPR 75"),
-                        "plate": ds.get("truck_plate", ""),
-                        "color": ds.get("truck_color", "Oq (Sariq chiziqli)"),
-                        "status": ds.get("status", "arrived"),
-                        "street": ds.get("street", "istiqlol"),
-                        "street_name": ds.get("street_name", "Istiqlol ko‘chasi"),
-                        "mfy": ds.get("mfy", q_mfy),
-                        "district": ds.get("district", q_dist),
-                        "region": ds.get("region", q_reg),
-                        "lat": float(ds.get("lat", 38.6850)),
-                        "lng": float(ds.get("lng", 65.6800)),
-                        "avatar_url": ds.get("avatar_url") or ""
-                    })
-                    seen_plates.add(pl_clean)
+                # 2. Add from db_trucks
+                for dt in db_trucks:
+                    pl_clean = re.sub(r'\s+', '', str(dt.get("truck_plate", ""))).upper()
+                    if pl_clean not in seen_plates:
+                        dt_phone = str(dt.get("phone", ""))
+                        dt_phone_clean = re.sub(r'\D', '', dt_phone)[-7:] or "truck"
+                        response_trucks.append({
+                            "id": f"drv_{dt_phone_clean}",
+                            "name": dt.get("full_name") or dt.get("driver_name", "Haydovchi"),
+                            "phone": dt_phone,
+                            "model": dt.get("truck_model", "Isuzu NPR 75"),
+                            "plate": dt.get("truck_plate", ""),
+                            "color": dt.get("truck_color", "Oq"),
+                            "status": dt.get("status", "arrived"),
+                            "street": dt.get("street", "istiqlol"),
+                            "street_name": dt.get("street_name", "Istiqlol ko‘chasi"),
+                            "mfy": dt.get("live_mfy") or dt.get("assigned_mfy", q_mfy),
+                            "district": dt.get("live_dist") or dt.get("assigned_district", q_dist),
+                            "region": dt.get("live_reg") or dt.get("assigned_region", q_reg),
+                            "lat": float(dt.get("lat", 38.6850)),
+                            "lng": float(dt.get("lng", 65.6800)),
+                            "avatar_url": dt.get("avatar_url") or ""
+                        })
+                        seen_plates.add(pl_clean)
 
-            # 2. Add any additional trucks from db_trucks (registered active trucks in database)
-            for dt in db_trucks:
-                pl_clean = re.sub(r'\s+', '', str(dt.get("truck_plate", ""))).upper()
-                if pl_clean not in seen_plates:
-                    dt_phone = str(dt.get("phone", ""))
-                    dt_phone_clean = re.sub(r'\D', '', dt_phone)[-7:] or "truck"
-                    response_trucks.append({
-                        "id": f"drv_{dt_phone_clean}",
-                        "name": dt.get("full_name") or dt.get("driver_name", "Haydovchi"),
-                        "phone": dt_phone,
-                        "model": dt.get("truck_model", "Isuzu NPR 75"),
-                        "plate": dt.get("truck_plate", ""),
-                        "color": dt.get("truck_color", "Oq"),
-                        "status": dt.get("status", "arrived"),
-                        "street": dt.get("street", "istiqlol"),
-                        "street_name": dt.get("street_name", "Istiqlol ko‘chasi"),
-                        "mfy": dt.get("live_mfy") or dt.get("assigned_mfy", q_mfy),
-                        "district": dt.get("live_dist") or dt.get("assigned_district", q_dist),
-                        "region": dt.get("live_reg") or dt.get("assigned_region", q_reg),
-                        "lat": float(dt.get("lat", 38.6850)),
-                        "lng": float(dt.get("lng", 65.6800)),
-                        "avatar_url": dt.get("avatar_url") or ""
-                    })
-                    seen_plates.add(pl_clean)
-
-            self.wfile.write(json.dumps({"status": "ok", "trucks": response_trucks}).encode("utf-8"))
-            return
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "ok", "trucks": response_trucks}).encode("utf-8"))
+                return
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "error", "error": str(e), "trucks": []}).encode("utf-8"))
+                return
 
         if self.path.startswith("/api/auth/2fa-status"):
             try:

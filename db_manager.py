@@ -12,6 +12,31 @@ def get_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
+
+def ensure_db_columns():
+    conn = get_connection()
+    c = conn.cursor()
+    migrations = [
+        ("drivers", "avatar_url", "TEXT DEFAULT ''"),
+        ("drivers", "account_id", "TEXT DEFAULT ''"),
+        ("driver_live", "avatar_url", "TEXT DEFAULT ''"),
+        ("users", "avatar_url", "TEXT DEFAULT ''"),
+        ("users", "account_id", "TEXT DEFAULT ''")
+    ]
+    for table, col, col_type in migrations:
+        try:
+            c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
+        except Exception:
+            pass
+    conn.commit()
+    conn.close()
+
+# Auto-run migration whenever module is loaded
+try:
+    ensure_db_columns()
+except Exception as _e:
+    pass
+
 def init_db():
     conn = get_connection()
     cursor = conn.cursor()
