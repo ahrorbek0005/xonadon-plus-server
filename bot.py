@@ -3700,19 +3700,27 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                     if target_dist and drv_dist and target_dist != drv_dist:
                         continue
 
-                    pl_clean = re.sub(r'\s+', '', str(ds.get("truck_plate", ""))).upper()
+                    raw_phone = str(ds.get("phone", "") or ds.get("account_phone", ""))
+                    t_plate = str(ds.get("truck_plate", "")).strip()
+                    if not t_plate and raw_phone:
+                        db_d = db_manager.get_driver_by_phone(raw_phone)
+                        if db_d and db_d.get("truck_plate"):
+                            t_plate = str(db_d.get("truck_plate", "")).strip()
+                            ds["truck_plate"] = t_plate
+
+                    pl_clean = re.sub(r'\s+', '', t_plate).upper() if t_plate else re.sub(r'\D', '', raw_phone)
                     if pl_clean not in seen_plates:
-                        raw_phone = str(ds.get("phone", ""))
                         clean_phone_id = re.sub(r'\D', '', raw_phone)[-7:] or "truck"
                         av_u = ds.get("avatar_url") or ""
                         if av_u.startswith("/"):
                             av_u = "https://xonadon-plus-server.onrender.com" + av_u
                         response_trucks.append({
                             "id": f"drv_{clean_phone_id}",
-                            "name": ds.get("driver_name", "Ahror Suyunov"),
+                            "name": ds.get("driver_name") or "Haydovchi",
                             "phone": raw_phone,
                             "model": ds.get("truck_model", "Isuzu NPR 75"),
-                            "plate": ds.get("truck_plate", ""),
+                            "plate": t_plate,
+                            "truck_plate": t_plate,
                             "color": ds.get("truck_color", "Oq (Sariq chiziqli)"),
                             "status": ds.get("status", "arrived"),
                             "stage": ds.get("stage", "collect"),
@@ -3732,9 +3740,10 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                     dt_mfy = norm_key(dt.get("live_mfy") or dt.get("assigned_mfy") or dt.get("mfy", ""))
                     if not target_mfy or not dt_mfy or target_mfy != dt_mfy:
                         continue
-                    pl_clean = re.sub(r'\s+', '', str(dt.get("truck_plate", ""))).upper()
+                    dt_plate = str(dt.get("truck_plate", "")).strip()
+                    dt_phone = str(dt.get("phone", ""))
+                    pl_clean = re.sub(r'\s+', '', dt_plate).upper() if dt_plate else re.sub(r'\D', '', dt_phone)
                     if pl_clean not in seen_plates:
-                        dt_phone = str(dt.get("phone", ""))
                         dt_phone_clean = re.sub(r'\D', '', dt_phone)[-7:] or "truck"
                         dt_av = dt.get("avatar_url") or ""
                         if dt_av.startswith("/"):
@@ -3744,7 +3753,8 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                             "name": dt.get("full_name") or dt.get("driver_name", "Haydovchi"),
                             "phone": dt_phone,
                             "model": dt.get("truck_model", "Isuzu NPR 75"),
-                            "plate": dt.get("truck_plate", ""),
+                            "plate": dt_plate,
+                            "truck_plate": dt_plate,
                             "color": dt.get("truck_color", "Oq"),
                             "status": dt.get("status", "arrived"),
                             "stage": dt.get("stage", "collect"),
@@ -4334,6 +4344,27 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
             return
 
+                if self.path == "/api/admin/clear-all-drivers":
+            try:
+                db_manager.clear_all_drivers_and_trucks()
+                active_driver_states.clear()
+                current_driver_state.clear()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "ok": True,
+                    "message": "Barcha mashinalar, haydovchilar va eski 2FA parollari serverdan butunlay tozalandi!"
+                }).encode("utf-8"))
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
+            return
+
         if self.path == "/api/auth/login":
             try:
                 length = int(self.headers.get("Content-Length", 0) or 0)
@@ -4532,7 +4563,7 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 st_k = data.get("street", "istiqlol")
                 st_n = data.get("street_name", "Istiqlol ko‘chasi")
                 drv_n = data.get("driver_name", "Ahror Suyunov")
-                t_plate = data.get("truck_plate") or data.get("plate") or ""
+                t_plate = data.get("truck_plate") or data.get("plate") or (db_driver.get("truck_plate") if db_driver else "") or ""
                 t_model = data.get("truck_model", "Isuzu NPR 75")
                 t_color = data.get("truck_color", "Oq (Sariq chiziqli)")
                 avatar_u = data.get("avatar_url", "")

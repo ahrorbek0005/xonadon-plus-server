@@ -140,14 +140,8 @@ def init_db():
     """)
 
     # Insert default initial data if empty
-    cursor.execute("SELECT COUNT(*) as cnt FROM users;")
-    if cursor.fetchone()["cnt"] == 0:
-        cursor.execute("""
-        INSERT INTO users (phone, full_name, role, region, district, mfy, street, house_number)
-        VALUES 
-        ('+998940401009', 'Rustam Abdullayev', 'resident', 'qashqadaryo', 'nishon', 'koksoy', 'koksoy_markaziy', '12-uy'),
-        ('+998901234567', 'Islomov Javohir', 'driver', 'qashqadaryo', 'nishon', 'koksoy', 'koksoy_markaziy', '1-uy');
-        """)
+    # To'liq toza tizim - hech qanday mock yoki sinov fuqarolari kiritilmaydi
+    pass
 
     # Clean up any lingering mock seed drivers
     try:
@@ -156,8 +150,14 @@ def init_db():
     except Exception:
         pass
 
-    # Mock driver auto-seed completely disabled to allow full clean driver deletion
-    pass
+    # Foydalanuvchi talabiga ko'ra barcha eski mashina, haydovchi va 2FA ma'lumotlarini tozalash
+    try:
+        cursor.execute("DELETE FROM drivers;")
+        cursor.execute("DELETE FROM driver_live;")
+        cursor.execute("UPDATE users SET two_step_password = NULL, two_step_hint = NULL;")
+        cursor.execute("DELETE FROM sessions;"); cursor.execute("DELETE FROM user_avatars;"); cursor.execute("DELETE FROM users;")
+    except Exception as _we:
+        pass
 
     try:
         cursor.execute("ALTER TABLE drivers ADD COLUMN account_id TEXT;")
@@ -270,14 +270,15 @@ def add_driver(phone, full_name, truck_plate, password='gaz2026', truck_model='I
     
     # Also ensure user table has driver role and same account_id
     c.execute("""
-    INSERT OR REPLACE INTO users (phone, full_name, role, region, district, mfy, account_id)
-    VALUES (?, ?, 'driver', ?, ?, ?, ?)
+    INSERT OR REPLACE INTO users (phone, full_name, role, region, district, mfy, account_id, two_step_password, two_step_hint)
+    VALUES (?, ?, 'driver', ?, ?, ?, ?, NULL, NULL)
     """, (clean_p, full_name, assigned_region, assigned_district, assigned_mfy, account_id))
+    c.execute("UPDATE users SET two_step_password = NULL, two_step_hint = NULL WHERE phone = ? OR phone LIKE ?", (clean_p, f"%{clean_p[-9:]}%"))
 
     # Also register in driver_live
     c.execute("""
     INSERT OR REPLACE INTO driver_live (phone, driver_name, truck_plate, truck_model, truck_color, status, stage, lat, lng, region, district, mfy)
-    VALUES (?, ?, ?, ?, ?, 'idle', 'collect', 38.665, 65.698, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, 'arrived', 'collect', 38.665, 65.698, ?, ?, ?)
     """, (clean_p, full_name, truck_plate, truck_model, truck_color, assigned_region, assigned_district, assigned_mfy))
 
     conn.commit()
@@ -309,6 +310,18 @@ def is_driver_deleted(phone):
         return False
     driver = get_driver_by_phone(phone)
     return driver is None
+
+def clear_all_drivers_and_trucks():
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("DELETE FROM drivers")
+    c.execute("DELETE FROM driver_live")
+    c.execute("DELETE FROM users WHERE role = 'driver'")
+    c.execute("UPDATE users SET two_step_password = NULL, two_step_hint = NULL")
+    c.execute("DELETE FROM sessions")
+    conn.commit()
+    conn.close()
+    return True
 
 def delete_driver(phone):
     conn = get_connection()
@@ -702,9 +715,12 @@ def get_active_trucks(region=None, district=None, mfy=None):
     for r in rows:
         d = dict(r)
         
-        # Filter waiting / idle
-        if str(d.get('status', '')).lower() in ['waiting', 'idle']:
+        # Only hide if explicitly in 'waiting'
+        st_lower = str(d.get('status', '')).lower()
+        if st_lower == 'waiting':
             continue
+        if st_lower in ['idle', '']:
+            d['status'] = 'arrived'
             
         cur_mfy = norm(d.get('live_mfy') or d.get('assigned_mfy'))
         cur_dist = norm(d.get('live_dist') or d.get('assigned_district'))
