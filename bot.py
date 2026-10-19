@@ -3694,7 +3694,8 @@ class AlertApiHandler(BaseHTTPRequestHandler):
 
                     drv_mfy = norm_key(ds.get("mfy", ""))
                     drv_dist = norm_key(ds.get("district", ""))
-                    if target_mfy and drv_mfy and target_mfy != drv_mfy:
+                    # Qat'iy MFY mosligi: boshqa MFYdagi mashina hech qachon chiqmasin
+                    if not target_mfy or not drv_mfy or target_mfy != drv_mfy:
                         continue
                     if target_dist and drv_dist and target_dist != drv_dist:
                         continue
@@ -3724,6 +3725,9 @@ class AlertApiHandler(BaseHTTPRequestHandler):
 
                 # 2. Add from db_trucks
                 for dt in db_trucks:
+                    dt_mfy = norm_key(dt.get("live_mfy") or dt.get("assigned_mfy") or dt.get("mfy", ""))
+                    if not target_mfy or not dt_mfy or target_mfy != dt_mfy:
+                        continue
                     pl_clean = re.sub(r'\s+', '', str(dt.get("truck_plate", ""))).upper()
                     if pl_clean not in seen_plates:
                         dt_phone = str(dt.get("phone", ""))
