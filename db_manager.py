@@ -715,11 +715,11 @@ def get_active_trucks(region=None, district=None, mfy=None):
     for r in rows:
         d = dict(r)
         
-        # Only hide if explicitly in 'waiting'
-        st_lower = str(d.get('status', '')).lower()
-        if st_lower == 'waiting':
+        # Strictly hide any driver in waiting / idle / paused / stopped / kutish mode
+        st_lower = str(d.get('status', '')).strip().lower()
+        if st_lower in ['waiting', 'idle', 'paused', 'stopped', 'kutish']:
             continue
-        if st_lower in ['idle', '']:
+        if not st_lower:
             d['status'] = 'arrived'
             
         cur_mfy = norm(d.get('live_mfy') or d.get('assigned_mfy'))

@@ -3684,8 +3684,8 @@ class AlertApiHandler(BaseHTTPRequestHandler):
 
                 # 1. Add all live drivers currently in active_driver_states
                 for cp, ds in list(active_driver_states.items()):
-                    st = str(ds.get("status", "")).lower()
-                    if st in ["waiting", "idle"]:
+                    st = str(ds.get("status", "")).strip().lower()
+                    if st in ["waiting", "idle", "paused", "stopped", "kutish"]:
                         continue
                     if ds.get("is_active", 1) == 0:
                         continue
@@ -3735,8 +3735,11 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                         })
                         seen_plates.add(pl_clean)
 
-                # 2. Add from db_trucks
+                # 2. Add from db_trucks (strictly exclude waiting / idle drivers)
                 for dt in db_trucks:
+                    dt_st = str(dt.get("status", "")).strip().lower()
+                    if dt_st in ["waiting", "idle", "paused", "stopped", "kutish"]:
+                        continue
                     dt_mfy = norm_key(dt.get("live_mfy") or dt.get("assigned_mfy") or dt.get("mfy", ""))
                     if not target_mfy or not dt_mfy or target_mfy != dt_mfy:
                         continue
@@ -3848,8 +3851,12 @@ class AlertApiHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
-            loc = db_manager.get_driver_location("koksoy")
-            self.wfile.write(json.dumps({"driver": loc or {"lat": 38.665, "lng": 65.698, "status": "arrived"}}).encode("utf-8"))
+            loc = None
+            for cp, ds in active_driver_states.items():
+                if str(ds.get("status", "")).strip().lower() not in ["waiting", "idle", "paused", "stopped", "kutish"]:
+                    loc = ds
+                    break
+            self.wfile.write(json.dumps({"driver": loc}).encode("utf-8"))
             return
 
         self.send_response(200)
