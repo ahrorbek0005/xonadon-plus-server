@@ -3664,8 +3664,9 @@ class AlertApiHandler(BaseHTTPRequestHandler):
             seen_plates = set()
 
             if not is_waiting and is_active_flag and is_match_mfy and is_match_dist and db_driver:
+                clean_phone_id = re.sub(r'\D', '', str(drv_phone))[-7:]
                 live_truck = {
-                    "id": f"drv_{re.sub(r'\D', '', drv_phone)[-7:]}",
+                    "id": f"drv_{clean_phone_id}",
                     "name": current_driver_state.get("driver_name", "Ahror Suyunov"),
                     "phone": drv_phone,
                     "model": current_driver_state.get("truck_model", "Isuzu NPR 75"),
@@ -3687,8 +3688,9 @@ class AlertApiHandler(BaseHTTPRequestHandler):
             for dt in db_trucks:
                 pl_clean = dt.get("truck_plate", "").replace(" ", "").upper()
                 if pl_clean not in seen_plates:
+                    dt_phone_clean = re.sub(r'\D', '', str(dt.get('phone', '')))[-7:]
                     response_trucks.append({
-                        "id": f"drv_{re.sub(r'\D', '', dt.get('phone', ''))[-7:]}",
+                        "id": f"drv_{dt_phone_clean}",
                         "name": dt.get("full_name", ""),
                         "phone": dt.get("phone", ""),
                         "model": dt.get("truck_model", "Isuzu NPR 75"),
