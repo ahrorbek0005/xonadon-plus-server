@@ -4344,7 +4344,7 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
             return
 
-                if self.path == "/api/admin/clear-all-drivers":
+        if self.path == "/api/admin/clear-all-drivers":
             try:
                 db_manager.clear_all_drivers_and_trucks()
                 active_driver_states.clear()
