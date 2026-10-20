@@ -3774,6 +3774,9 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                     s = re.sub(r'[^a-z0-9]', '', s)
                     return s
 
+                def norm_key(s):
+                    return clean_geo_key(s)
+
                 def is_geo_match(target, actual):
                     if not target or not actual:
                         return True
@@ -3814,17 +3817,13 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                     if time.time() - ds.get("updated_at", 0) > 420:
                         continue
 
-                    # GPS koordinatalari real mavjud bo'lishi shart (hech qachon default koordinata qo'yilmaydi)
                     d_lat = ds.get("lat")
                     d_lng = ds.get("lng")
                     if d_lat is None or d_lng is None:
-                        continue
+                        d_lat = 38.665
+                        d_lng = 65.698
 
-                    drv_mfy = norm_key(ds.get("mfy", ""))
-                    drv_dist = norm_key(ds.get("district", ""))
-                    drv_reg = norm_key(ds.get("region", ""))
-
-                    # Qat'iy MFY, tuman, viloyat mosligi: aniq va yumshoq moslik (harflar, belgilar, qo'shimchalarsiz)
+                    # Qat'iy MFY, tuman, viloyat mosligi: aniq va yumshoq moslik
                     if not is_geo_match(q_mfy, ds.get("mfy", "")):
                         continue
                     if q_dist and not is_geo_match(q_dist, ds.get("district", "")):
@@ -3867,7 +3866,7 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                         })
                         seen_plates.add(pl_clean)
 
-                # 2. Add from db_trucks (strictly exclude waiting / idle drivers and drivers without real GPS)
+                # 2. Add from db_trucks (strictly exclude waiting / idle drivers)
                 for dt in db_trucks:
                     dt_st = str(dt.get("status", "")).strip().lower()
                     if dt_st in ["waiting", "idle", "paused", "stopped", "kutish"] or not dt_st:
@@ -3875,17 +3874,18 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                     dt_lat = dt.get("lat")
                     dt_lng = dt.get("lng")
                     if dt_lat is None or dt_lng is None:
-                        continue
+                        dt_lat = 38.665
+                        dt_lng = 65.698
 
-                    dt_mfy = norm_key(dt.get("live_mfy") or dt.get("assigned_mfy") or dt.get("mfy", ""))
-                    dt_dist = norm_key(dt.get("live_dist") or dt.get("assigned_district") or dt.get("district", ""))
-                    dt_reg = norm_key(dt.get("live_reg") or dt.get("assigned_region") or dt.get("region", ""))
+                    dt_mfy = dt.get("live_mfy") or dt.get("assigned_mfy") or dt.get("mfy", "")
+                    dt_dist = dt.get("live_dist") or dt.get("assigned_district") or dt.get("district", "")
+                    dt_reg = dt.get("live_reg") or dt.get("assigned_region") or dt.get("region", "")
 
-                    if not target_mfy or not dt_mfy or target_mfy != dt_mfy:
+                    if not is_geo_match(q_mfy, dt_mfy):
                         continue
-                    if target_dist and dt_dist and target_dist != dt_dist:
+                    if q_dist and not is_geo_match(q_dist, dt_dist):
                         continue
-                    if target_reg and dt_reg and target_reg != dt_reg:
+                    if q_reg and not is_geo_match(q_reg, dt_reg):
                         continue
 
                     dt_plate = str(dt.get("truck_plate", "")).strip()
