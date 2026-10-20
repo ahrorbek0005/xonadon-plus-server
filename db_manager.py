@@ -231,6 +231,31 @@ def register_user(phone, full_name, role='resident', region='qashqadaryo', distr
         }
     }
 
+def update_user_address(phone, region, district, mfy, street, house_number=""):
+    conn = get_connection()
+    c = conn.cursor()
+    clean_p = re.sub(r'\D', '', str(phone or ''))
+    last9 = clean_p[-9:] if len(clean_p) >= 9 else clean_p
+    c.execute("""
+        UPDATE users
+        SET region = COALESCE(NULLIF(?, ''), region),
+            district = COALESCE(NULLIF(?, ''), district),
+            mfy = COALESCE(NULLIF(?, ''), mfy),
+            street = COALESCE(NULLIF(?, ''), street),
+            house_number = COALESCE(NULLIF(?, ''), house_number)
+        WHERE phone LIKE ?
+    """, (region, district, mfy, street, house_number, f"%{last9}%"))
+    if c.rowcount == 0 and len(last9) >= 9:
+        acc_id = generate_unique_account_id("XP-")
+        full_phone = f"+998{last9}"
+        c.execute("""
+            INSERT INTO users (phone, full_name, role, region, district, mfy, street, house_number, account_id)
+            VALUES (?, 'Aholi', 'resident', ?, ?, ?, ?, ?, ?)
+        """, (full_phone, region, district, mfy, street, house_number, acc_id))
+    conn.commit()
+    conn.close()
+    return True
+
 def get_user_by_phone(phone):
     conn = get_connection()
     c = conn.cursor()

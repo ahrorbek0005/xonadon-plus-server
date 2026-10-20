@@ -4079,6 +4079,68 @@ class AlertApiHandler(BaseHTTPRequestHandler):
 
         # --- API: SEND SMS CODE DIRECTLY TO LINKED TELEGRAM BOT CHAT ---
                 # Check if phone number is already registered
+        # Check if driver is active in database (or check if any active driver exists)
+        if self.path.startswith("/api/auth/check-driver-active"):
+            try:
+                import urllib.parse
+                qs = urllib.parse.urlparse(self.path).query
+                params = urllib.parse.parse_qs(qs)
+                phone = params.get("phone", [""])[0]
+                check_any = params.get("any", ["0"])[0] == "1"
+
+                if check_any or not phone:
+                    all_drivers = db_manager.get_all_drivers()
+                    has_any = len(all_drivers) > 0
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({
+                        "ok": True,
+                        "has_drivers": has_any,
+                        "count": len(all_drivers)
+                    }).encode("utf-8"))
+                    return
+
+                d = db_manager.get_driver_by_phone(phone)
+                if d and d.get("is_active", 1) == 1:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({
+                        "ok": True,
+                        "is_active": True,
+                        "phone": d.get("phone"),
+                        "full_name": d.get("full_name"),
+                        "truck_plate": d.get("truck_plate"),
+                        "truck_model": d.get("truck_model"),
+                        "truck_color": d.get("truck_color"),
+                        "account_id": d.get("account_id"),
+                        "assigned_mfy": d.get("assigned_mfy"),
+                        "assigned_district": d.get("assigned_district"),
+                        "assigned_region": d.get("assigned_region"),
+                        "avatar_url": d.get("avatar_url", "")
+                    }).encode("utf-8"))
+                else:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({
+                        "ok": False,
+                        "is_active": False,
+                        "deleted": True,
+                        "message": "Haydovchi tizimda topilmadi yoki administrator tomonidan o‘chirilgan"
+                    }).encode("utf-8"))
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
+            return
+
         if self.path.startswith("/api/auth/check-user"):
             try:
                 import urllib.parse
@@ -4261,11 +4323,11 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                         phone=f"+{raw_phone}",
                         full_name=full_name,
                         role="resident",
-                        region="qashqadaryo",
-                        district="nishon",
-                        mfy="koksoy",
-                        street="koksoy_markaziy",
-                        house_number="1-uy"
+                        region="",
+                        district="",
+                        mfy="",
+                        street="",
+                        house_number=""
                     )
                     user_obj = res.get("user")
                     if not user_obj:
@@ -4292,10 +4354,60 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                         c.execute("SELECT * FROM users WHERE phone LIKE ?", (f"%{raw_phone[-9:]}%",))
                         user = c.fetchone()
                         conn.close()
-                    user_dict = dict(user) if user else {"phone": f"+{raw_phone}", "full_name": "Ahror Suyunov", "role": "resident", "account_id": db_manager.generate_unique_account_id("XP-")}
+                    
+                    if user:
+                        user_dict = dict(user)
+                    else:
+                        reg_res = db_manager.register_user(
+                            phone=f"+{raw_phone}",
+                            full_name="Ahror Suyunov",
+                            role="resident",
+                            region="",
+                            district="",
+                            mfy="",
+                            street="",
+                            house_number=""
+                        )
+                        user_dict = reg_res.get("user") or {"phone": f"+{raw_phone}", "full_name": "Ahror Suyunov", "role": "resident", "account_id": db_manager.generate_unique_account_id("XP-")}
+
                     if not user_dict.get("account_id"):
                         user_dict["account_id"] = db_manager.generate_unique_account_id("XP-")
-                    
+                        try:
+                            conn = db_manager.get_connection()
+                            c = conn.cursor()
+                            c.execute("UPDATE users SET account_id = ? WHERE phone LIKE ?", (user_dict["account_id"], f"%{raw_phone[-9:]}%"))
+                            conn.commit()
+                            conn.close()
+                        except Exception:
+                            pass
+
+                    # Backfill address from bot subscribers if empty in SQLite
+                    if not user_dict.get("region") or not user_dict.get("mfy"):
+                        try:
+                            subs = load_subscribers()
+                            for cid, u_data in subs.items():
+                                u_raw = u_data.get("raw_phone", "")
+                                u_ph = str(u_data.get("phone", ""))
+                                if raw_phone[-9:] in u_raw or raw_phone[-9:] in u_ph:
+                                    addr = u_data.get("address", {})
+                                    if addr.get("region") and addr.get("mfy"):
+                                        user_dict["region"] = addr.get("region", "")
+                                        user_dict["district"] = addr.get("district", "")
+                                        user_dict["mfy"] = addr.get("mfy", "")
+                                        user_dict["street"] = addr.get("street", "")
+                                        user_dict["house_number"] = addr.get("house", "")
+                                        db_manager.update_user_address(
+                                            phone=raw_phone,
+                                            region=user_dict["region"],
+                                            district=user_dict["district"],
+                                            mfy=user_dict["mfy"],
+                                            street=user_dict["street"],
+                                            house_number=user_dict["house_number"]
+                                        )
+                                        break
+                        except Exception as _sub_err:
+                            print("[SUB ADDR BACKFILL ERROR]:", _sub_err)
+
                     status_2fa = db_manager.get_user_2fa_status(f"+{raw_phone}")
                     if not status_2fa.get("has_2fa"):
                         status_2fa = db_manager.get_user_2fa_status(raw_phone)
@@ -4941,6 +5053,18 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                         user_data["address_text"] = addr_text
                         updated_count += 1
                 save_subscribers(subs)
+                # Persist to SQLite users table permanently
+                try:
+                    db_manager.update_user_address(
+                        phone=phone_in,
+                        region=reg,
+                        district=dist,
+                        mfy=mfy,
+                        street=street,
+                        house_number=data.get("house", "")
+                    )
+                except Exception as _db_addr_err:
+                    print("[DB UPDATE USER ADDR ERROR]:", _db_addr_err)
                 print(f"[API] Foydalanuvchi manzili sinxronlandi: {addr_text} ({updated_count} ta obunachi)")
 
                 self.send_response(200)
