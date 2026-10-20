@@ -3710,7 +3710,7 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                         continue
                     if ds.get("is_active", 1) == 0:
                         continue
-                    if time.time() - ds.get("updated_at", 0) > 2700:
+                    if time.time() - ds.get("updated_at", 0) > 420:
                         continue
 
                     # GPS koordinatalari real mavjud bo'lishi shart (hech qachon default koordinata qo'yilmaydi)
@@ -4803,6 +4803,45 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 t_model = data.get("truck_model") or current_driver_state.get("truck_model", "Isuzu NPR 75")
                 t_color = data.get("truck_color") or current_driver_state.get("truck_color", "Oq (Sariq chiziqli)")
 
+                # Commit driver's live dispatched state
+                clean_drv_p = re.sub(r'\D', '', str(drv_p))[-9:] or "unknown"
+                active_state_obj = active_driver_states.get(clean_drv_p, {})
+                active_state_obj.update({
+                    "phone": drv_p,
+                    "account_phone": drv_p,
+                    "driver_name": drv_n,
+                    "truck_plate": plate,
+                    "truck_model": t_model,
+                    "truck_color": t_color,
+                    "status": "arrived",
+                    "stage": stg,
+                    "region": reg_k,
+                    "district": dist_k,
+                    "mfy": mfy_k,
+                    "street": st_k,
+                    "street_name": st_n or st_k,
+                    "updated_at": time.time()
+                })
+                active_driver_states[clean_drv_p] = active_state_obj
+
+                try:
+                    db_manager.upsert_driver_live(
+                        phone=drv_p,
+                        driver_name=drv_n,
+                        truck_plate=plate,
+                        truck_model=t_model,
+                        truck_color=t_color,
+                        status="arrived",
+                        stage=stg,
+                        region=reg_k,
+                        district=dist_k,
+                        mfy=mfy_k,
+                        street=st_k,
+                        street_name=st_n or st_k
+                    )
+                except Exception as _ups_err:
+                    print("[ALERT UPSERT ERROR]:", _ups_err)
+
                 sent_count = broadcast_street_alert(
                     street_key=st_k,
                     reg_key=reg_k,
@@ -4846,89 +4885,6 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(json.dumps({"ok": False, "error": str(e), "trace": err_msg}).encode("utf-8"))
 
-        elif self.path == "/api/set-driver-status":
-            try:
-                length = int(self.headers.get("Content-Length", 0) or 0)
-                body = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
-                data = json.loads(body)
-                phone = str(data.get("account_phone") or data.get("phone", "+998901234567")).strip()
-                contact_p = str(data.get("contact_phone") or data.get("driver_phone") or phone).strip()
-                clean_p = re.sub(r'\D', '', phone)[-9:] or "unknown"
-                clean_contact = re.sub(r'\D', '', contact_p)[-9:] or clean_p
-                new_status = data.get("status", "arrived")
-                
-                # Update current_driver_state
-                current_driver_state["status"] = new_status
-                if "street" in data: current_driver_state["street"] = data["street"]
-                if "region" in data: current_driver_state["region"] = data["region"]
-                if "district" in data: current_driver_state["district"] = data["district"]
-                if "mfy" in data: current_driver_state["mfy"] = data["mfy"]
-                if "stage" in data: current_driver_state["stage"] = data["stage"]
-                if "driver_name" in data: current_driver_state["driver_name"] = data["driver_name"]
-                if "driver_phone" in data: current_driver_state["driver_phone"] = contact_p
-                if "plate" in data: current_driver_state["truck_plate"] = data["plate"]
-                if "truck_plate" in data: current_driver_state["truck_plate"] = data["truck_plate"]
-                if "truck_model" in data: current_driver_state["truck_model"] = data["truck_model"]
-                if "truck_color" in data: current_driver_state["truck_color"] = data["truck_color"]
-
-                # Update in active_driver_states
-                existing = active_driver_states.get(clean_p) or active_driver_states.get(clean_contact, {})
-                existing.update({
-                    "phone": contact_p,
-                    "account_phone": phone,
-                    "driver_name": data.get("driver_name") or existing.get("driver_name", "Ahror Suyunov"),
-                    "truck_plate": data.get("truck_plate") or data.get("plate") or existing.get("truck_plate", ""),
-                    "truck_model": data.get("truck_model") or existing.get("truck_model", "Isuzu NPR 75"),
-                    "truck_color": data.get("truck_color") or existing.get("truck_color", "Oq (Sariq chiziqli)"),
-                    "status": new_status,
-                    "stage": data.get("stage") or existing.get("stage", "collect"),
-                    "region": data.get("region") or existing.get("region", "qashqadaryo"),
-                    "district": data.get("district") or existing.get("district", "nishon"),
-                    "mfy": data.get("mfy") or existing.get("mfy", "kok_soy"),
-                    "street": data.get("street") or existing.get("street", "istiqlol"),
-                    "street_name": data.get("street_name") or existing.get("street_name", "Istiqlol ko‘chasi"),
-                    "updated_at": time.time()
-                })
-                if "avatar_url" in data and data["avatar_url"]:
-                    existing["avatar_url"] = data["avatar_url"]
-                    current_driver_state["avatar_url"] = data["avatar_url"]
-                elif not existing.get("avatar_url"):
-                    av = db_manager.get_user_avatar(phone, "driver") or db_manager.get_user_avatar(contact_p, "driver")
-                    if av:
-                        existing["avatar_url"] = av
-                active_driver_states[clean_p] = existing
-                if clean_contact != clean_p:
-                    active_driver_states[clean_contact] = existing
-
-                # Also save to DB
-                db_manager.upsert_driver_live(
-                    phone=phone,
-                    driver_name=existing.get("driver_name", ""),
-                    truck_plate=existing.get("truck_plate", ""),
-                    truck_model=existing.get("truck_model", ""),
-                    truck_color=existing.get("truck_color", ""),
-                    status=new_status,
-                    stage=existing.get("stage", "collect"),
-                    lat=existing.get("lat", 38.6850),
-                    lng=existing.get("lng", 65.6800),
-                    region=existing.get("region", "qashqadaryo"),
-                    district=existing.get("district", "nishon"),
-                    mfy=existing.get("mfy", "kok_soy"),
-                    street=existing.get("street", "istiqlol"),
-                    street_name=existing.get("street_name", "Istiqlol ko‘chasi"),
-                    avatar_url=existing.get("avatar_url", "")
-                )
-
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-                self.send_header("Access-Control-Allow-Headers", "*")
-                self.end_headers()
-                self.wfile.write(json.dumps({"ok": True, "driver_state": existing}).encode("utf-8"))
-            except Exception as e:
-                self.send_response(500)
-                self.end_headers()
         elif self.path == "/api/sync-user":
             try:
                 length = int(self.headers.get("Content-Length", 0) or 0)
