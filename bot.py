@@ -11,7 +11,7 @@ import db_manager
 db_manager.init_db()
 import time
 import urllib.request
-import urllib.parse
+                # urllib.parse is already imported at top
 import threading
 import socket
 import re
@@ -3672,9 +3672,71 @@ class AlertApiHandler(BaseHTTPRequestHandler):
 
         # --- REAL-TIME ACTIVE TRUCKS FOR CITIZEN MAP & CARDS ---
                 # User profile endpoint: return user details, permanent account_id, and address
+                # Check if driver is active in database (or check if any active driver exists)
+        if self.path.startswith("/api/auth/check-driver-active"):
+            try:
+                qs = urllib.parse.urlparse(self.path).query
+                params = urllib.parse.parse_qs(qs)
+                phone = params.get("phone", [""])[0]
+                check_any = params.get("any", ["0"])[0] == "1"
+
+                if check_any or not phone:
+                    all_drivers = db_manager.get_all_drivers()
+                    has_any = len(all_drivers) > 0
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({
+                        "ok": True,
+                        "has_drivers": has_any,
+                        "count": len(all_drivers)
+                    }).encode("utf-8"))
+                    return
+
+                d = db_manager.get_driver_by_phone(phone)
+                if d and d.get("is_active", 1) == 1:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({
+                        "ok": True,
+                        "is_active": True,
+                        "phone": d.get("phone"),
+                        "full_name": d.get("full_name"),
+                        "truck_plate": d.get("truck_plate"),
+                        "truck_model": d.get("truck_model"),
+                        "truck_color": d.get("truck_color"),
+                        "account_id": d.get("account_id"),
+                        "assigned_mfy": d.get("assigned_mfy"),
+                        "assigned_district": d.get("assigned_district"),
+                        "assigned_region": d.get("assigned_region"),
+                        "avatar_url": d.get("avatar_url", "")
+                    }).encode("utf-8"))
+                else:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({
+                        "ok": False,
+                        "is_active": False,
+                        "deleted": True,
+                        "message": "Haydovchi tizimda topilmadi yoki administrator tomonidan o‘chirilgan"
+                    }).encode("utf-8"))
+                return
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
+                return
+
         if self.path.startswith("/api/user/profile"):
             try:
-                import urllib.parse
+                # urllib.parse is already imported at top
                 qs = urllib.parse.urlparse(self.path).query
                 params = urllib.parse.parse_qs(qs)
                 phone_in = params.get("phone", [""])[0]
@@ -4183,7 +4245,7 @@ class AlertApiHandler(BaseHTTPRequestHandler):
         # Check if driver is active in database (or check if any active driver exists)
         if self.path.startswith("/api/auth/check-driver-active"):
             try:
-                import urllib.parse
+                # urllib.parse is already imported at top
                 qs = urllib.parse.urlparse(self.path).query
                 params = urllib.parse.parse_qs(qs)
                 phone = params.get("phone", [""])[0]
@@ -4244,7 +4306,7 @@ class AlertApiHandler(BaseHTTPRequestHandler):
 
         if self.path.startswith("/api/auth/check-user"):
             try:
-                import urllib.parse
+                # urllib.parse is already imported at top
                 qs = urllib.parse.urlparse(self.path).query
                 params = urllib.parse.parse_qs(qs)
                 phone = params.get("phone", [""])[0]
