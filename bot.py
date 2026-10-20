@@ -3671,6 +3671,94 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 return
 
         # --- REAL-TIME ACTIVE TRUCKS FOR CITIZEN MAP & CARDS ---
+                # User profile endpoint: return user details, permanent account_id, and address
+        if self.path.startswith("/api/user/profile"):
+            try:
+                import urllib.parse
+                qs = urllib.parse.urlparse(self.path).query
+                params = urllib.parse.parse_qs(qs)
+                phone_in = params.get("phone", [""])[0]
+                digits_all = re.sub(r'\D', '', phone_in)
+                last9 = digits_all[-9:] if len(digits_all) >= 9 else digits_all
+
+                user_row = None
+                if last9:
+                    conn = db_manager.get_connection()
+                    c = conn.cursor()
+                    c.execute("SELECT * FROM users WHERE phone LIKE ?", (f"%{last9}%",))
+                    user_row = c.fetchone()
+                    conn.close()
+
+                if user_row:
+                    u_dict = dict(user_row)
+                    if not u_dict.get("account_id"):
+                        u_dict["account_id"] = db_manager.generate_unique_account_id("XP-")
+                        try:
+                            conn = db_manager.get_connection()
+                            c = conn.cursor()
+                            c.execute("UPDATE users SET account_id = ? WHERE id = ?", (u_dict["account_id"], u_dict["id"]))
+                            conn.commit()
+                            conn.close()
+                        except Exception:
+                            pass
+                else:
+                    full_p = f"+998{last9}" if last9 else "+998940401009"
+                    u_dict = {
+                        "phone": full_p,
+                        "full_name": "Aholi",
+                        "role": "resident",
+                        "account_id": db_manager.generate_unique_account_id("XP-"),
+                        "region": "",
+                        "district": "",
+                        "mfy": "",
+                        "street": "",
+                        "house_number": ""
+                    }
+                    if last9:
+                        try:
+                            subs = load_subscribers()
+                            for cid, u_data in subs.items():
+                                u_raw = u_data.get("raw_phone", "")
+                                u_ph = str(u_data.get("phone", ""))
+                                if last9 in u_raw or last9 in u_ph:
+                                    addr = u_data.get("address", {})
+                                    u_dict["region"] = addr.get("region", "")
+                                    u_dict["district"] = addr.get("district", "")
+                                    u_dict["mfy"] = addr.get("mfy", "")
+                                    u_dict["street"] = addr.get("street", "")
+                                    u_dict["house_number"] = addr.get("house", "")
+                                    u_dict["full_name"] = u_data.get("full_name") or u_data.get("name") or "Aholi"
+                                    break
+                        except Exception:
+                            pass
+                        try:
+                            db_manager.register_user(
+                                phone=u_dict["phone"],
+                                full_name=u_dict["full_name"],
+                                role="resident",
+                                region=u_dict["region"],
+                                district=u_dict["district"],
+                                mfy=u_dict["mfy"],
+                                street=u_dict["street"],
+                                house_number=u_dict["house_number"]
+                            )
+                        except Exception:
+                            pass
+
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": True, "user": u_dict}).encode("utf-8"))
+                return
+            except Exception as _pe:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": False, "error": str(_pe)}).encode("utf-8"))
+                return
+
         if self.path.startswith("/api/active-trucks") or self.path.startswith("/api/get-active-trucks"):
             try:
                 qs = urllib.parse.urlparse(self.path).query
@@ -3679,12 +3767,25 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 q_dist = params.get("district", [""])[0].strip()
                 q_mfy = params.get("mfy", [""])[0].strip()
 
-                def norm_key(s):
-                    return re.sub(r'[^a-zA-Z0-9]', '', str(s or '')).lower()
+                def clean_geo_key(s):
+                    s = str(s or '').lower()
+                    s = s.replace('‘', '').replace('’', '').replace("'", "").replace('`', '')
+                    s = re.sub(r'(?:viloyati|tumani|shahri|shahar|respublikasi|mfy|m\.f\.y|mahalla|ovul|qishloq|kochasi|ko‘chasi|k\.)', '', s)
+                    s = re.sub(r'[^a-z0-9]', '', s)
+                    return s
 
-                target_mfy = norm_key(q_mfy)
-                target_dist = norm_key(q_dist)
-                target_reg = norm_key(q_reg)
+                def is_geo_match(target, actual):
+                    if not target or not actual:
+                        return True
+                    t = clean_geo_key(target)
+                    a = clean_geo_key(actual)
+                    if not t or not a:
+                        return True
+                    return (t == a) or (t in a) or (a in t)
+
+                target_mfy = clean_geo_key(q_mfy)
+                target_dist = clean_geo_key(q_dist)
+                target_reg = clean_geo_key(q_reg)
 
                 # Agar aholi hali manzil kiritmagan bo'lsa (yangi tozalangan holat), mutlaqo mashina ko'rsatilmasin!
                 if not target_mfy or target_mfy in ["none", "null", "undefined"]:
@@ -3723,12 +3824,12 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                     drv_dist = norm_key(ds.get("district", ""))
                     drv_reg = norm_key(ds.get("region", ""))
 
-                    # Qat'iy MFY, tuman, viloyat mosligi: boshqa MFYdagi mashina hech qachon aholiga chiqmasin
-                    if not target_mfy or not drv_mfy or target_mfy != drv_mfy:
+                    # Qat'iy MFY, tuman, viloyat mosligi: aniq va yumshoq moslik (harflar, belgilar, qo'shimchalarsiz)
+                    if not is_geo_match(q_mfy, ds.get("mfy", "")):
                         continue
-                    if target_dist and drv_dist and target_dist != drv_dist:
+                    if q_dist and not is_geo_match(q_dist, ds.get("district", "")):
                         continue
-                    if target_reg and drv_reg and target_reg != drv_reg:
+                    if q_reg and not is_geo_match(q_reg, ds.get("region", "")):
                         continue
 
                     raw_phone = str(ds.get("phone", "") or ds.get("account_phone", ""))
@@ -4724,18 +4825,43 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 if stat in ["waiting", "idle", "paused", "stopped", "kutish"]:
                     stat = "waiting"
 
-                if clean_p and clean_p in active_driver_states:
-                    active_driver_states[clean_p]["status"] = stat
-                    active_driver_states[clean_p]["stage"] = stg
-                    if stat == "waiting":
-                        active_driver_states[clean_p]["lat"] = None
-                        active_driver_states[clean_p]["lng"] = None
-                    if reg_k: active_driver_states[clean_p]["region"] = reg_k
-                    if dist_k: active_driver_states[clean_p]["district"] = dist_k
-                    if mfy_k: active_driver_states[clean_p]["mfy"] = mfy_k
-                    if st_k: active_driver_states[clean_p]["street"] = st_k
-                    if st_n: active_driver_states[clean_p]["street_name"] = st_n
-                    active_driver_states[clean_p]["updated_at"] = time.time()
+                if clean_p:
+                    if clean_p not in active_driver_states:
+                        active_driver_states[clean_p] = {
+                            "phone": phone,
+                            "account_phone": phone,
+                            "driver_name": data.get("driver_name", "Haydovchi"),
+                            "truck_plate": data.get("truck_plate") or data.get("plate", ""),
+                            "truck_model": data.get("truck_model", "Isuzu NPR 75"),
+                            "truck_color": data.get("truck_color", "Oq (Sariq chiziqli)"),
+                            "status": stat,
+                            "stage": stg,
+                            "region": reg_k,
+                            "district": dist_k,
+                            "mfy": mfy_k,
+                            "street": st_k,
+                            "street_name": st_n,
+                            "lat": data.get("lat"),
+                            "lng": data.get("lng"),
+                            "avatar_url": data.get("avatar_url", ""),
+                            "is_active": 1,
+                            "updated_at": time.time()
+                        }
+                    else:
+                        active_driver_states[clean_p]["status"] = stat
+                        active_driver_states[clean_p]["stage"] = stg
+                        if stat == "waiting":
+                            active_driver_states[clean_p]["lat"] = None
+                            active_driver_states[clean_p]["lng"] = None
+                        elif data.get("lat") is not None and data.get("lng") is not None:
+                            active_driver_states[clean_p]["lat"] = data.get("lat")
+                            active_driver_states[clean_p]["lng"] = data.get("lng")
+                        if reg_k: active_driver_states[clean_p]["region"] = reg_k
+                        if dist_k: active_driver_states[clean_p]["district"] = dist_k
+                        if mfy_k: active_driver_states[clean_p]["mfy"] = mfy_k
+                        if st_k: active_driver_states[clean_p]["street"] = st_k
+                        if st_n: active_driver_states[clean_p]["street_name"] = st_n
+                        active_driver_states[clean_p]["updated_at"] = time.time()
 
                 if phone:
                     db_manager.upsert_driver_live(
