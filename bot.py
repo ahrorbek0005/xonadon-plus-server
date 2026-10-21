@@ -2551,6 +2551,25 @@ def get_otp_keyboard():
     }
 
 
+
+def get_driver_search_choice_keyboard():
+    return {
+        "keyboard": [
+            [{"text": "🆔 ID orqali qidirish"}, {"text": "📱 Telefon raqam orqali qidirish"}],
+            [{"text": "⬅️ Admin menyusiga qaytish"}]
+        ],
+        "resize_keyboard": True
+    }
+
+def get_user_search_choice_keyboard():
+    return {
+        "keyboard": [
+            [{"text": "🆔 ID orqali qidirish"}, {"text": "📱 Telefon raqam orqali qidirish"}],
+            [{"text": "⬅️ Admin menyusiga qaytish"}]
+        ],
+        "resize_keyboard": True
+    }
+
 def get_admin_reply_keyboard():
     return {
         "keyboard": [
@@ -3019,92 +3038,305 @@ def handle_message(msg):
     text = msg.get("text", "").strip()
 
 
-    # --- ADMIN: Aholini qidirish ---
-    if text in ["🔍 Aholini qidirish", "/search_user"]:
-        if not user_sub.get("is_admin_active"):
-            send_message(chat_id, "⚠️ Ushbu bo‘lim faqat tizim admini uchun ochiq. Avval /admin buyrug‘ini bering.")
+
+    # ========================================================
+    # ADMIN TEMIRDEK HIMOYALANGAN BOSHQARUV ROUTERI
+    # ========================================================
+    if user_sub.get("is_admin_active"):
+        # 1. Agar admin klaviaturadagi boshqa buyruq tugmasini bossa -> Joriy holatni tozalaymiz
+        admin_menu_cmds = [
+            "🔍 Haydovchini qidirish", "🔍 Aholini qidirish", "➕ Yangi haydovchi qo‘shish",
+            "👥 Aholi ro‘yxati (Excel)", "📋 Aholi ro‘yxati (Excel)", "📋 Haydovchilar ro‘yxati",
+            "👥 Fuqarolar statistikasi", "⬅️ Asosiy menyuga qaytish", "⬅️ Admin menyusiga qaytish",
+            "/exit_admin", "/admin", "/admin_login"
+        ]
+
+        if text in admin_menu_cmds:
+            user_sub.pop("admin_state", None)
+            save_subscribers(subs)
+
+        # 2. Chiqish yoki Admin menyusiga qaytish
+        if text == "⬅️ Asosiy menyuga qaytish" or text == "/exit_admin":
+            user_sub["is_admin_active"] = False
+            user_sub.pop("admin_state", None)
+            save_subscribers(subs)
+            send_message(chat_id, "Asosiy fuqaro menyusiga qaytdingiz.", reply_markup=get_main_keyboard(chat_id))
             return
-        user_sub["admin_state"] = "awaiting_search_user"
-        save_subscribers(subs)
-        send_message(
-            chat_id,
-            "🔍 Fuqaroning <b>Telefon raqamini</b> (+998912345678) yoki <b>Maxsus ID-sini</b> (XP-123456) kiriting:\n"
-            "<i>(Masalan: +998912345678 yoki 123456)</i>",
-            parse_mode="HTML"
-        )
-        return
 
-    # --- ADMIN: Aholi ro'yxati (Excel) ---
-    if text in ["👥 Aholi ro‘yxati (Excel)", "/users_excel", "📋 Aholi ro‘yxati (Excel)"]:
-        if not user_sub.get("is_admin_active"):
-            send_message(chat_id, "⚠️ Ushbu bo‘lim faqat tizim admini uchun ochiq. Avval /admin buyrug‘ini bering.")
+        if text == "⬅️ Admin menyusiga qaytish":
+            user_sub.pop("admin_state", None)
+            save_subscribers(subs)
+            admin_menu_text = (
+                "👑 <b>XONADON+ BOSHQARUV PANELI (BOSH ADMIN)</b>\n\n"
+                "Xush kelibsiz, Administrator! Ushbu bo‘lim faqat sizga ko‘rinadi.\n"
+                "Tizimni boshqarish uchun pastdagi tugmalardan foydalanishingiz mumkin:\n\n"
+                "🔍 <b>/search_driver</b> — Haydovchini qidirish\n"
+                "🔍 <b>/search_user</b> — Aholini qidirish\n"
+                "➕ <b>/add_driver</b> — Yangi haydovchi qo‘shish\n"
+                "📋 <b>/drivers</b> — Barcha haydovchilar ro‘yxati\n"
+                "👥 <b>/users_excel</b> — Aholi ro‘yxati (Excel yuklab olish)\n"
+                "📊 <b>/users</b> — Fuqarolar statistikasi\n"
+                "🚪 <b>/exit_admin</b> — Admin rejimidan chiqish"
+            )
+            inline_admin_kb = {
+                "inline_keyboard": [
+                    [{"text": "🔍 Haydovchini qidirish", "callback_data": "admin_search_driver"}, {"text": "🔍 Aholini qidirish", "callback_data": "admin_search_user"}],
+                    [{"text": "➕ Yangi haydovchi qo‘shish", "callback_data": "admin_add_driver"}],
+                    [{"text": "📋 Haydovchilar ro‘yxati", "callback_data": "admin_list_drivers"}, {"text": "👥 Aholi ro‘yxati (Excel)", "callback_data": "admin_users_excel"}],
+                    [{"text": "📊 Fuqarolar statistikasi", "callback_data": "admin_users_stat"}],
+                    [{"text": "🚪 Admin rejimidan chiqish", "callback_data": "admin_exit"}]
+                ]
+            }
+            send_message(chat_id, "👑 <b>Admin boshqaruv paneli:</b>", reply_markup=get_admin_reply_keyboard(), parse_mode="HTML")
+            send_message(chat_id, admin_menu_text, reply_markup=inline_admin_kb, parse_mode="HTML")
             return
-        kb = {
-            "inline_keyboard": [
-                [{"text": "🇺🇿 Butun O‘zbekiston", "callback_data": "exp_u_all"}],
-                [{"text": "📍 Hududlar bo‘yicha", "callback_data": "exp_u_hudud"}],
-                [{"text": "⬅️ Admin panelga qaytish", "callback_data": "admin_back"}]
-            ]
-        }
-        send_message(
-            chat_id,
-            "📊 <b>AHOLI RO‘YXATINI EXCELDA YUKLAB OLISH</b>\n\n"
-            "Qaysi qamrovdagi fuqarolar ro‘yxatini yuklab olmoqchisiz?\n"
-            "Pastdagi variantlardan birini tanlang 👇",
-            reply_markup=kb,
-            parse_mode="HTML"
-        )
-        return
 
-    # Agar admin fuqaroni qidirayotgan bo'lsa
-    if user_sub.get("admin_state") == "awaiting_search_user":
-        query = text.strip()
-        user_row = db_manager.get_user_by_account_id(query) or db_manager.get_user_by_phone(query)
-        user_sub.pop("admin_state", None)
-        save_subscribers(subs)
+        # 3. Haydovchini qidirish menyusi
+        if text in ["🔍 Haydovchini qidirish", "/search_driver"]:
+            user_sub["admin_state"] = "awaiting_driver_search_choice"
+            save_subscribers(subs)
+            send_message(
+                chat_id,
+                "🔍 <b>HAYDOVCHINI QIDIRISH:</b>\n\nQidirish usulini tanlang 👇",
+                reply_markup=get_driver_search_choice_keyboard(),
+                parse_mode="HTML"
+            )
+            return
 
-        if not user_row:
+        # 4. Aholini qidirish menyusi
+        if text in ["🔍 Aholini qidirish", "/search_user"]:
+            user_sub["admin_state"] = "awaiting_user_search_choice"
+            save_subscribers(subs)
+            send_message(
+                chat_id,
+                "🔍 <b>AHOLINI QIDIRISH:</b>\n\nQidirish usulini tanlang 👇",
+                reply_markup=get_user_search_choice_keyboard(),
+                parse_mode="HTML"
+            )
+            return
+
+        # 5. Aholi ro'yxati Excel
+        if text in ["👥 Aholi ro‘yxati (Excel)", "/users_excel", "📋 Aholi ro‘yxati (Excel)"]:
             kb = {
                 "inline_keyboard": [
-                    [{"text": "🔄 Qayta qidirish", "callback_data": "admin_search_user"}],
+                    [{"text": "🇺🇿 Butun O‘zbekiston", "callback_data": "exp_u_all"}],
+                    [{"text": "📍 Hududlar bo‘yicha", "callback_data": "exp_u_hudud"}],
+                    [{"text": "⬅️ Admin panelga qaytish", "callback_data": "admin_back"}]
+                ]
+            }
+            send_message(
+                chat_id,
+                "📊 <b>AHOLI RO‘YXATINI EXCELDA YUKLAB OLISH</b>\n\n"
+                "Qaysi qamrovdagi fuqarolar ro‘yxatini yuklab olmoqchisiz?\n"
+                "Pastdagi variantlardan birini tanlang 👇",
+                reply_markup=kb,
+                parse_mode="HTML"
+            )
+            return
+
+        # 6. Haydovchini qidirish tanlov holati (awaiting_driver_search_choice)
+        if user_sub.get("admin_state") == "awaiting_driver_search_choice":
+            if text == "🆔 ID orqali qidirish":
+                user_sub["admin_state"] = "awaiting_search_driver_id"
+                save_subscribers(subs)
+                send_message(chat_id, "🆔 Haydovchining <b>Maxsus ID-sini</b> kiriting:\n<i>(Masalan: HP-123456 yoki 123456)</i>", parse_mode="HTML")
+                return
+            elif text in ["📱 Telefon raqam orqali qidirish", "📱 Telefon raqami orqali qidirish"]:
+                user_sub["admin_state"] = "awaiting_search_driver_phone"
+                save_subscribers(subs)
+                send_message(chat_id, "📱 Haydovchining <b>Telefon raqamini</b> kiriting:\n<i>(Masalan: +998912345678 yoki 912345678)</i>", parse_mode="HTML")
+                return
+            else:
+                send_message(
+                    chat_id,
+                    "⚠️ <b>Iltimos, qidiruv usulini pastdagi tugmalar orqali tanlang 👇</b>",
+                    reply_markup=get_driver_search_choice_keyboard(),
+                    parse_mode="HTML"
+                )
+                return
+
+        # 7. Aholini qidirish tanlov holati (awaiting_user_search_choice)
+        if user_sub.get("admin_state") == "awaiting_user_search_choice":
+            if text == "🆔 ID orqali qidirish":
+                user_sub["admin_state"] = "awaiting_search_user_id"
+                save_subscribers(subs)
+                send_message(chat_id, "🆔 Fuqaroning <b>Maxsus ID-sini</b> kiriting:\n<i>(Masalan: XP-123456 yoki 123456)</i>", parse_mode="HTML")
+                return
+            elif text in ["📱 Telefon raqam orqali qidirish", "📱 Telefon raqami orqali qidirish"]:
+                user_sub["admin_state"] = "awaiting_search_user_phone"
+                save_subscribers(subs)
+                send_message(chat_id, "📱 Fuqaroning <b>Telefon raqamini</b> kiriting:\n<i>(Masalan: +998912345678 yoki 912345678)</i>", parse_mode="HTML")
+                return
+            else:
+                send_message(
+                    chat_id,
+                    "⚠️ <b>Iltimos, qidiruv usulini pastdagi tugmalar orqali tanlang 👇</b>",
+                    reply_markup=get_user_search_choice_keyboard(),
+                    parse_mode="HTML"
+                )
+                return
+
+        # 8. Haydovchini ID orqali qidirish (Faqat Server Database dan)
+        if user_sub.get("admin_state") == "awaiting_search_driver_id":
+            # Validatsiya: HP-123456 yoki 123456 (aniq 6 ta raqam)
+            m = re.match(r'^(?:HP-)?(\d{6})$', text.strip(), re.IGNORECASE)
+            if not m:
+                send_message(
+                    chat_id,
+                    "⚠️ <b>Noto‘g‘ri format!</b> Iltimos, haydovchi ID raqamini to‘g‘ri kiriting:\n<i>(Masalan: HP-123456 yoki 123456)</i>",
+                    parse_mode="HTML"
+                )
+                return
+            num_part = m.group(1)
+            drv = db_manager.get_driver_by_account_id(f"HP-{num_part}") or db_manager.get_driver_by_account_id(num_part)
+            user_sub.pop("admin_state", None)
+            save_subscribers(subs)
+            if drv:
+                send_driver_card(chat_id, drv)
+            else:
+                send_message(chat_id, f"❌ <b>HP-{num_part} ID raqamli haydovchi server bazasida topilmadi!</b>", parse_mode="HTML")
+            return
+
+        # 9. Haydovchini Telefon orqali qidirish
+        if user_sub.get("admin_state") == "awaiting_search_driver_phone":
+            digits = re.sub(r'\D', '', text)
+            if len(digits) < 9 or len(digits) > 12:
+                send_message(
+                    chat_id,
+                    "⚠️ <b>Noto‘g‘ri format!</b> Iltimos, haydovchi telefon raqamini to‘g‘ri kiriting:\n<i>(Masalan: +998912345678 yoki 912345678)</i>",
+                    parse_mode="HTML"
+                )
+                return
+            drv = db_manager.get_driver_by_phone(digits)
+            user_sub.pop("admin_state", None)
+            save_subscribers(subs)
+            if drv:
+                send_driver_card(chat_id, drv)
+            else:
+                send_message(chat_id, f"❌ <b>+{digits} raqamli haydovchi server bazasida topilmadi!</b>", parse_mode="HTML")
+            return
+
+        # 10. Aholini ID orqali qidirish (Faqat Server Database dan)
+        if user_sub.get("admin_state") == "awaiting_search_user_id":
+            inp = text.strip()
+            # Agar HP- kiritilsa -> Taqiqlaymiz!
+            if inp.upper().startswith("HP-") or (inp.upper().startswith("HP") and len(inp) > 2):
+                send_message(
+                    chat_id,
+                    "⚠️ <b>Noto‘g‘ri format!</b> Ushbu ID haydovchiga tegishli. Fuqaro ID-sini kiriting:\n<i>(Masalan: XP-123456 yoki 123456)</i>",
+                    parse_mode="HTML"
+                )
+                return
+            m = re.match(r'^(?:XP-)?(\d{6})$', inp, re.IGNORECASE)
+            if not m:
+                send_message(
+                    chat_id,
+                    "⚠️ <b>Noto‘g‘ri format!</b> Iltimos, 6 xonali fuqaro ID raqamini to‘g‘ri kiriting:\n<i>(Masalan: XP-123456 yoki 123456)</i>",
+                    parse_mode="HTML"
+                )
+                return
+            num_part = m.group(1)
+            user_row = db_manager.get_user_by_account_id(f"XP-{num_part}") or db_manager.get_user_by_account_id(num_part)
+            user_sub.pop("admin_state", None)
+            save_subscribers(subs)
+
+            if not user_row:
+                send_message(chat_id, f"❌ <b>XP-{num_part} ID raqamli fuqaro server bazasida topilmadi!</b>", parse_mode="HTML")
+                return
+
+            u_id = user_row.get("id")
+            fname = safe_html(user_row.get("full_name") or "Aholi")
+            phone = safe_html(user_row.get("phone") or "+998912345678")
+            acc_id = safe_html(user_row.get("account_id") or f"XP-{num_part}")
+
+            reg_k = user_row.get("region") or "qashqadaryo"
+            dist_k = user_row.get("district") or "nishon"
+            mfy_k = user_row.get("mfy") or "koksoy"
+            st_k = user_row.get("street") or "koksoy_markaziy"
+
+            reg_n = ADDRESS_DB.get(reg_k, {}).get("name", reg_k)
+            dist_n = ADDRESS_DB.get(reg_k, {}).get("districts", {}).get(dist_k, {}).get("name", dist_k)
+            mfy_n = ADDRESS_DB.get(reg_k, {}).get("districts", {}).get(dist_k, {}).get("mfys", {}).get(mfy_k, {}).get("name", mfy_k)
+            st_n = ADDRESS_DB.get(reg_k, {}).get("districts", {}).get(dist_k, {}).get("mfys", {}).get(mfy_k, {}).get("streets", {}).get(st_k, st_k)
+            full_addr = f"{reg_n}, {dist_n}, {mfy_n} MFY, {st_n}"
+
+            info_text = (
+                "👤 <b>FUQARO MA’LUMOTLARI</b>\n\n"
+                f"👤 <b>Ism va Familiya:</b> {fname}\n"
+                f"🆔 <b>Maxsus ID:</b> <code>{acc_id}</code>\n"
+                f"📱 <b>Telefon raqami:</b> <code>{phone}</code>\n\n"
+                f"📍 <b>Ro‘yxatdan o‘tgan to‘liq manzili:</b>\n<i>{safe_html(full_addr)}</i>"
+            )
+            kb = {
+                "inline_keyboard": [
+                    [{"text": "🗑 Fuqaroni tizimdan o‘chirish", "callback_data": f"del_user:{u_id}"}],
+                    [{"text": "🔍 Boshqa fuqaroni qidirish", "callback_data": "admin_search_user"}],
                     [{"text": "⬅️ Admin menyusiga qaytish", "callback_data": "admin_back"}]
                 ]
             }
-            send_message(chat_id, f"❌ <b>«{safe_html(query)}» bo‘yicha hech qanday fuqaro topilmadi!</b>", reply_markup=kb, parse_mode="HTML")
+            send_message(chat_id, info_text, reply_markup=kb, parse_mode="HTML")
             return
 
-        u_id = user_row.get("id")
-        fname = safe_html(user_row.get("full_name") or "Aholi")
-        phone = safe_html(user_row.get("phone") or "+998912345678")
-        acc_id = safe_html(user_row.get("account_id") or "XP-104928")
-        
-        reg_k = user_row.get("region") or "qashqadaryo"
-        dist_k = user_row.get("district") or "nishon"
-        mfy_k = user_row.get("mfy") or "koksoy"
-        st_k = user_row.get("street") or "koksoy_markaziy"
-        
-        reg_n = ADDRESS_DB.get(reg_k, {}).get("name", reg_k)
-        dist_n = ADDRESS_DB.get(reg_k, {}).get("districts", {}).get(dist_k, {}).get("name", dist_k)
-        mfy_n = ADDRESS_DB.get(reg_k, {}).get("districts", {}).get(dist_k, {}).get("mfys", {}).get(mfy_k, {}).get("name", mfy_k)
-        st_n = ADDRESS_DB.get(reg_k, {}).get("districts", {}).get(dist_k, {}).get("mfys", {}).get(mfy_k, {}).get("streets", {}).get(st_k, st_k)
-        full_addr = f"{reg_n}, {dist_n}, {mfy_n} MFY, {st_n}"
+        # 11. Aholini Telefon orqali qidirish (Faqat Server Database dan)
+        if user_sub.get("admin_state") == "awaiting_search_user_phone":
+            digits = re.sub(r'\D', '', text)
+            if len(digits) < 9 or len(digits) > 12:
+                send_message(
+                    chat_id,
+                    "⚠️ <b>Noto‘g‘ri format!</b> Iltimos, fuqaroning telefon raqamini to‘g‘ri kiriting:\n<i>(Masalan: +998912345678 yoki 912345678)</i>",
+                    parse_mode="HTML"
+                )
+                return
+            user_row = db_manager.get_user_by_phone(digits)
+            user_sub.pop("admin_state", None)
+            save_subscribers(subs)
 
-        info_text = (
-            "👤 <b>FUQARO MA’LUMOTLARI</b>\n\n"
-            f"👤 <b>Ism va Familiya:</b> {fname}\n"
-            f"🆔 <b>Maxsus ID:</b> <code>{acc_id}</code>\n"
-            f"📱 <b>Telefon raqami:</b> <code>{phone}</code>\n\n"
-            f"📍 <b>Ro‘yxatdan o‘tgan to‘liq manzili:</b>\n<i>{safe_html(full_addr)}</i>"
-        )
-        kb = {
-            "inline_keyboard": [
-                [{"text": "🗑 Fuqaroni tizimdan o‘chirish", "callback_data": f"del_user:{u_id}"}],
-                [{"text": "🔍 Boshqa fuqaroni qidirish", "callback_data": "admin_search_user"}],
-                [{"text": "⬅️ Admin menyusiga qaytish", "callback_data": "admin_back"}]
-            ]
-        }
-        send_message(chat_id, info_text, reply_markup=kb, parse_mode="HTML")
-        return
+            if not user_row:
+                send_message(chat_id, f"❌ <b>+{digits} raqamli fuqaro server bazasida topilmadi!</b>", parse_mode="HTML")
+                return
+
+            u_id = user_row.get("id")
+            fname = safe_html(user_row.get("full_name") or "Aholi")
+            phone = safe_html(user_row.get("phone") or "+998912345678")
+            acc_id = safe_html(user_row.get("account_id") or "XP-104928")
+
+            reg_k = user_row.get("region") or "qashqadaryo"
+            dist_k = user_row.get("district") or "nishon"
+            mfy_k = user_row.get("mfy") or "koksoy"
+            st_k = user_row.get("street") or "koksoy_markaziy"
+
+            reg_n = ADDRESS_DB.get(reg_k, {}).get("name", reg_k)
+            dist_n = ADDRESS_DB.get(reg_k, {}).get("districts", {}).get(dist_k, {}).get("name", dist_k)
+            mfy_n = ADDRESS_DB.get(reg_k, {}).get("districts", {}).get(dist_k, {}).get("mfys", {}).get(mfy_k, {}).get("name", mfy_k)
+            st_n = ADDRESS_DB.get(reg_k, {}).get("districts", {}).get(dist_k, {}).get("mfys", {}).get(mfy_k, {}).get("streets", {}).get(st_k, st_k)
+            full_addr = f"{reg_n}, {dist_n}, {mfy_n} MFY, {st_n}"
+
+            info_text = (
+                "👤 <b>FUQARO MA’LUMOTLARI</b>\n\n"
+                f"👤 <b>Ism va Familiya:</b> {fname}\n"
+                f"🆔 <b>Maxsus ID:</b> <code>{acc_id}</code>\n"
+                f"📱 <b>Telefon raqami:</b> <code>{phone}</code>\n\n"
+                f"📍 <b>Ro‘yxatdan o‘tgan to‘liq manzili:</b>\n<i>{safe_html(full_addr)}</i>"
+            )
+            kb = {
+                "inline_keyboard": [
+                    [{"text": "🗑 Fuqaroni tizimdan o‘chirish", "callback_data": f"del_user:{u_id}"}],
+                    [{"text": "🔍 Boshqa fuqaroni qidirish", "callback_data": "admin_search_user"}],
+                    [{"text": "⬅️ Admin menyusiga qaytish", "callback_data": "admin_back"}]
+                ]
+            }
+            send_message(chat_id, info_text, reply_markup=kb, parse_mode="HTML")
+            return
+
+        # 12. Agar admin biror boshqa tasodifiy matn yozsa (masalan: ygyu) -> FUQARO MENYUSIGA TUSHIB KETMAYDI!
+        if not user_sub.get("admin_state"):
+            send_message(
+                chat_id,
+                "👑 <b>Admin boshqaruv paneli:</b>\nIltimos, kerakli amalni pastdagi tugmalar orqali tanlang 👇",
+                reply_markup=get_admin_reply_keyboard(),
+                parse_mode="HTML"
+            )
+            return
 
     # --- ADMIN BOSHQARUVI (/admin_login yoki /admin) ---
     if text.startswith("/admin_login") or text == "/admin" or text.startswith("/admin "):
@@ -3861,6 +4093,228 @@ def handle_callback(cb):
     msg_id = msg.get("message_id")
 
     answer_callback(cb_id)
+
+    # --- AHOLI VA EXCEL CALLBACKLARI ---
+    if data == "admin_search_user":
+        subs = load_subscribers()
+        subs.setdefault(str(chat_id), {})["admin_state"] = "awaiting_user_search_choice"
+        save_subscribers(subs)
+        send_message(
+            chat_id,
+            "🔍 <b>AHOLINI QIDIRISH:</b>\n\nQidirish usulini tanlang 👇",
+            reply_markup=get_user_search_choice_keyboard(),
+            parse_mode="HTML"
+        )
+        return
+
+    if data == "del_user:" or data.startswith("del_user:"):
+        u_id = data.split(":")[1]
+        kb = {
+            "inline_keyboard": [
+                [{"text": "✅ Ha, o‘chirilsin", "callback_data": f"conf_del_u_yes:{u_id}"}],
+                [{"text": "❌ Yo‘q, bekor qilish", "callback_data": "admin_back"}]
+            ]
+        }
+        send_message(
+            chat_id,
+            "⚠️ <b>DIQQAT: Haqiqatan ham ushbu fuqaroni tizimdan butunlay o‘chirmoqchimisiz?</b>\n\n"
+            "O‘chirilgandan so‘ng fuqaroning manzili va unga biriktirilgan maxsus ID bekor qilinadi.",
+            reply_markup=kb,
+            parse_mode="HTML"
+        )
+        return
+
+    if data.startswith("conf_del_u_yes:"):
+        u_id = data.split(":")[1]
+        try:
+            db_manager.delete_user_by_id(int(u_id))
+            send_message(chat_id, "✅ <b>Fuqaro tizimdan muvaffaqiyatli o‘chirildi!</b>", parse_mode="HTML")
+        except Exception as e:
+            send_message(chat_id, f"❌ Xatolik yuz berdi: {safe_html(str(e))}")
+        return
+
+    if data in ["admin_users_excel", "admin_back"]:
+        kb = {
+            "inline_keyboard": [
+                [{"text": "🇺🇿 Butun O‘zbekiston", "callback_data": "exp_u_all"}],
+                [{"text": "📍 Hududlar bo‘yicha", "callback_data": "exp_u_hudud"}],
+                [{"text": "⬅️ Admin panelga qaytish", "callback_data": "admin_back_menu"}]
+            ]
+        }
+        send_message(
+            chat_id,
+            "📊 <b>AHOLI RO‘YXATINI EXCELDA YUKLAB OLISH</b>\n\n"
+            "Qaysi qamrovdagi fuqarolar ro‘yxatini yuklab olmoqchisiz?\n"
+            "Pastdagi variantlardan birini tanlang 👇",
+            reply_markup=kb,
+            parse_mode="HTML"
+        )
+        return
+
+    if data == "admin_back_menu":
+        admin_menu_text = (
+            "👑 <b>XONADON+ BOSHQARUV PANELI (BOSH ADMIN)</b>\n\n"
+            "Xush kelibsiz, Administrator! Ushbu bo‘lim faqat sizga ko‘rinadi.\n"
+            "Tizimni boshqarish uchun pastdagi tugmalardan foydalanishingiz mumkin:\n\n"
+            "🔍 <b>/search_driver</b> — Haydovchini qidirish\n"
+            "🔍 <b>/search_user</b> — Aholini qidirish\n"
+            "➕ <b>/add_driver</b> — Yangi haydovchi qo‘shish\n"
+            "📋 <b>/drivers</b> — Barcha haydovchilar ro‘yxati\n"
+            "👥 <b>/users_excel</b> — Aholi ro‘yxati (Excel yuklab olish)\n"
+            "📊 <b>/users</b> — Fuqarolar statistikasi\n"
+            "🚪 <b>/exit_admin</b> — Admin rejimidan chiqish"
+        )
+        inline_admin_kb = {
+            "inline_keyboard": [
+                [{"text": "🔍 Haydovchini qidirish", "callback_data": "admin_search_driver"}, {"text": "🔍 Aholini qidirish", "callback_data": "admin_search_user"}],
+                [{"text": "➕ Yangi haydovchi qo‘shish", "callback_data": "admin_add_driver"}],
+                [{"text": "📋 Haydovchilar ro‘yxati", "callback_data": "admin_list_drivers"}, {"text": "👥 Aholi ro‘yxati (Excel)", "callback_data": "admin_users_excel"}],
+                [{"text": "📊 Fuqarolar statistikasi", "callback_data": "admin_users_stat"}],
+                [{"text": "🚪 Admin rejimidan chiqish", "callback_data": "admin_exit"}]
+            ]
+        }
+        send_message(chat_id, "👑 <b>Admin boshqaruv paneli:</b>", reply_markup=get_admin_reply_keyboard(), parse_mode="HTML")
+        send_message(chat_id, admin_menu_text, reply_markup=inline_admin_kb, parse_mode="HTML")
+        return
+
+    if data == "exp_u_all":
+        send_message(chat_id, "⏳ <i>O‘zbekiston bo‘yicha to‘liq Excel fayli shakllantirilmoqda, iltimos kuting...</i>", parse_mode="HTML")
+        fpath = generate_users_excel_csv()
+        if not fpath or not os.path.exists(fpath):
+            send_message(chat_id, "ℹ️ Tizimda hozircha ro‘yxatdan o‘tgan fuqarolar mavjud emas.")
+            return
+        send_document(
+            chat_id,
+            fpath,
+            caption="📊 <b>O‘zbekiston Respublikasi bo‘yicha to‘liq aholi ro‘yxati (Excel/CSV)</b>\n\nKo‘chama-ko‘cha sarlavhalar bilan to‘liq shakllantirildi ✅"
+        )
+        try: os.remove(fpath)
+        except: pass
+        return
+
+    if data == "exp_u_hudud":
+        kb = {
+            "inline_keyboard": [
+                [{"text": "🌐 1. Viloyat qamrovida", "callback_data": "exp_scope:region"}],
+                [{"text": "🏙 2. Tuman qamrovida", "callback_data": "exp_scope:district"}],
+                [{"text": "🏘 3. MFY qamrovida", "callback_data": "exp_scope:mfy"}],
+                [{"text": "🛣 4. Ko‘cha qamrovida", "callback_data": "exp_scope:street"}],
+                [{"text": "⬅️ Orqaga", "callback_data": "admin_users_excel"}]
+            ]
+        }
+        send_message(chat_id, "📍 <b>Qaysi darajadagi hudud bo‘yicha filtrlashni xohlaysiz?</b>", reply_markup=kb, parse_mode="HTML")
+        return
+
+    if data.startswith("exp_scope:"):
+        scope = data.split(":")[1]
+        buttons = []
+        row = []
+        for r_key, r_val in ADDRESS_DB.items():
+            row.append({"text": r_val["name"], "callback_data": f"expreg:{scope}:{r_key}"})
+            if len(row) == 2:
+                buttons.append(row)
+                row = []
+        if row:
+            buttons.append(row)
+        buttons.append([{"text": "⬅️ Orqaga", "callback_data": "exp_u_hudud"}])
+        send_message(chat_id, "🌐 <b>Viloyatni tanlang:</b>", reply_markup={"inline_keyboard": buttons}, parse_mode="HTML")
+        return
+
+    if data.startswith("expreg:"):
+        _, scope, reg_k = data.split(":")
+        if scope == "region":
+            send_message(chat_id, f"⏳ <i>{ADDRESS_DB[reg_k]['name']} bo‘yicha fayl shakllantirilmoqda...</i>", parse_mode="HTML")
+            fpath = generate_users_excel_csv(region=reg_k)
+            if not fpath:
+                send_message(chat_id, "ℹ️ Ushbu viloyatda hali fuqarolar mavjud emas.")
+                return
+            send_document(chat_id, fpath, caption=f"📊 <b>{ADDRESS_DB[reg_k]['name']} aholi ro‘yxati</b>")
+            try: os.remove(fpath)
+            except: pass
+            return
+        else:
+            districts = ADDRESS_DB[reg_k]["districts"]
+            buttons = []
+            row = []
+            for d_key, d_val in districts.items():
+                row.append({"text": d_val["name"], "callback_data": f"expdist:{scope}:{reg_k}:{d_key}"})
+                if len(row) == 2:
+                    buttons.append(row)
+                    row = []
+            if row:
+                buttons.append(row)
+            buttons.append([{"text": "⬅️ Orqaga", "callback_data": f"exp_scope:{scope}"}])
+            send_message(chat_id, f"🏙 <b>{ADDRESS_DB[reg_k]['name']} — Tumanni tanlang:</b>", reply_markup={"inline_keyboard": buttons}, parse_mode="HTML")
+            return
+
+    if data.startswith("expdist:"):
+        _, scope, reg_k, dist_k = data.split(":")
+        dist_name = ADDRESS_DB[reg_k]["districts"][dist_k]["name"]
+        if scope == "district":
+            send_message(chat_id, f"⏳ <i>{dist_name} tumani bo‘yicha fayl shakllantirilmoqda...</i>", parse_mode="HTML")
+            fpath = generate_users_excel_csv(region=reg_k, district=dist_k)
+            if not fpath:
+                send_message(chat_id, "ℹ️ Ushbu tumanda hali fuqarolar mavjud emas.")
+                return
+            send_document(chat_id, fpath, caption=f"📊 <b>{dist_name} tumani aholi ro‘yxati</b>")
+            try: os.remove(fpath)
+            except: pass
+            return
+        else:
+            mfys = ADDRESS_DB[reg_k]["districts"][dist_k]["mfys"]
+            buttons = []
+            row = []
+            for m_key, m_val in mfys.items():
+                row.append({"text": m_val["name"], "callback_data": f"expmfy:{scope}:{reg_k}:{dist_k}:{m_key}"})
+                if len(row) == 2:
+                    buttons.append(row)
+                    row = []
+            if row:
+                buttons.append(row)
+            buttons.append([{"text": "⬅️ Orqaga", "callback_data": f"expreg:{scope}:{reg_k}"}])
+            send_message(chat_id, f"🏘 <b>{dist_name} tumani — Mahalla (MFY)ni tanlang:</b>", reply_markup={"inline_keyboard": buttons}, parse_mode="HTML")
+            return
+
+    if data.startswith("expmfy:"):
+        _, scope, reg_k, dist_k, mfy_k = data.split(":")
+        mfy_name = ADDRESS_DB[reg_k]["districts"][dist_k]["mfys"][mfy_k]["name"]
+        if scope == "mfy":
+            send_message(chat_id, f"⏳ <i>«{mfy_name}» MFY bo‘yicha fayl shakllantirilmoqda...</i>", parse_mode="HTML")
+            fpath = generate_users_excel_csv(region=reg_k, district=dist_k, mfy=mfy_k)
+            if not fpath:
+                send_message(chat_id, "ℹ️ Ushbu mahallada hali fuqarolar mavjud emas.")
+                return
+            send_document(chat_id, fpath, caption=f"📊 <b>«{mfy_name}» MFY aholi ro‘yxati</b>")
+            try: os.remove(fpath)
+            except: pass
+            return
+        else:
+            streets = ADDRESS_DB[reg_k]["districts"][dist_k]["mfys"][mfy_k]["streets"]
+            buttons = []
+            row = []
+            for s_key, s_name in streets.items():
+                row.append({"text": s_name, "callback_data": f"expst:{reg_k}:{dist_k}:{mfy_k}:{s_key}"})
+                if len(row) == 2:
+                    buttons.append(row)
+                    row = []
+            if row:
+                buttons.append(row)
+            buttons.append([{"text": "⬅️ Orqaga", "callback_data": f"expdist:{scope}:{reg_k}:{dist_k}"}])
+            send_message(chat_id, f"🛣 <b>«{mfy_name}» MFY — Ko‘chani tanlang:</b>", reply_markup={"inline_keyboard": buttons}, parse_mode="HTML")
+            return
+
+    if data.startswith("expst:"):
+        _, reg_k, dist_k, mfy_k, st_k = data.split(":")
+        st_name = ADDRESS_DB[reg_k]["districts"][dist_k]["mfys"][mfy_k]["streets"][st_k]
+        send_message(chat_id, f"⏳ <i>{st_name} bo‘yicha fayl shakllantirilmoqda...</i>", parse_mode="HTML")
+        fpath = generate_users_excel_csv(region=reg_k, district=dist_k, mfy=mfy_k, street=st_k)
+        if not fpath:
+            send_message(chat_id, f"ℹ️ {st_name}da hali fuqarolar mavjud emas.")
+            return
+        send_document(chat_id, fpath, caption=f"📊 <b>{st_name} aholi ro‘yxati</b>")
+        try: os.remove(fpath)
+        except: pass
+        return
 
     # --- ADMIN BOSHQARUV TUGMALARI (CALLBACKS) ---
     if data == "admin_search_driver":
