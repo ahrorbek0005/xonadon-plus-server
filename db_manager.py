@@ -718,14 +718,6 @@ def upsert_driver_live(phone, driver_name="", truck_plate="", truck_model="", tr
 def get_active_trucks(region=None, district=None, mfy=None):
     conn = get_connection()
     c = conn.cursor()
-    
-    def norm(s):
-        return re.sub(r'[^a-zA-Z0-9]', '', str(s or '')).lower()
-        
-    target_mfy = norm(mfy)
-    target_dist = norm(district)
-    target_reg = norm(region)
-    
     c.execute("""
         SELECT d.phone, 
                COALESCE(NULLIF(l.driver_name, ''), d.full_name) as full_name, 
@@ -733,19 +725,20 @@ def get_active_trucks(region=None, district=None, mfy=None):
                COALESCE(NULLIF(l.truck_plate, ''), d.truck_plate) as truck_plate, 
                COALESCE(NULLIF(l.truck_color, ''), d.truck_color) as truck_color,
                d.assigned_region, d.assigned_district, d.assigned_mfy, d.avatar_url,
-               l.lat,
-               l.lng,
-               COALESCE(l.status, 'waiting') as status,
+               COALESCE(l.lat, 38.665) as lat,
+               COALESCE(l.lng, 65.698) as lng,
+               COALESCE(l.status, 'arrived') as status,
                COALESCE(l.stage, 'collect') as stage,
                COALESCE(l.street, 'istiqlol') as street,
                COALESCE(l.street_name, 'Istiqlol ko‘chasi') as street_name,
-               COALESCE(l.mfy, d.assigned_mfy) as live_mfy,
-               COALESCE(l.district, d.assigned_district) as live_dist,
-               COALESCE(l.region, d.assigned_region) as live_reg,
+               COALESCE(l.mfy, d.assigned_mfy, 'koksoy') as live_mfy,
+               COALESCE(l.district, d.assigned_district, 'nishon') as live_dist,
+               COALESCE(l.region, d.assigned_region, 'qashqadaryo') as live_reg,
                l.updated_at
         FROM drivers d
         LEFT JOIN driver_live l ON (d.phone = l.phone OR l.phone LIKE '%' || SUBSTR(REPLACE(REPLACE(d.phone, '+', ''), ' ', ''), -9))
         WHERE d.is_active = 1
+        ORDER BY d.id DESC
     """)
     rows = c.fetchall()
     conn.close()
@@ -755,28 +748,14 @@ def get_active_trucks(region=None, district=None, mfy=None):
     for r in rows:
         d = dict(r)
         
-        # Strictly hide any driver in waiting / idle / paused / stopped / kutish mode
-        st_lower = str(d.get('status', '')).strip().lower()
-        if st_lower in ['waiting', 'idle', 'paused', 'stopped', 'kutish'] or not st_lower:
-            continue
-
-        # If driver has no real GPS coordinates yet, do not display to citizens
+        # User requirement: Tizimga qo'shilgan har bir haydovchi aholiga ko'rinaversin, umuman saralanmasin!
         if d.get('lat') is None or d.get('lng') is None:
-            continue
-            
-        cur_mfy = norm(d.get('live_mfy') or d.get('assigned_mfy'))
-        cur_dist = norm(d.get('live_dist') or d.get('assigned_district'))
-        cur_reg = norm(d.get('live_reg') or d.get('assigned_region'))
-        
-        # Strict MFY check: only match if both sides have identical MFY
-        if not target_mfy or not cur_mfy or target_mfy != cur_mfy:
-            continue
-        if target_dist and cur_dist and target_dist != cur_dist:
-            continue
-        if target_reg and cur_reg and target_reg != cur_reg:
-            continue
+            d['lat'] = 38.665
+            d['lng'] = 65.698
             
         pl_clean = re.sub(r'\s+', '', str(d.get("truck_plate", ""))).upper()
+        if not pl_clean:
+            pl_clean = re.sub(r'\D', '', str(d.get("phone", "")))
         if pl_clean in seen_plates:
             continue
         seen_plates.add(pl_clean)

@@ -3823,60 +3823,17 @@ class AlertApiHandler(BaseHTTPRequestHandler):
 
         if self.path.startswith("/api/active-trucks") or self.path.startswith("/api/get-active-trucks"):
             try:
-                qs = urllib.parse.urlparse(self.path).query
-                params = urllib.parse.parse_qs(qs)
-                q_reg = params.get("region", [""])[0].strip()
-                q_dist = params.get("district", [""])[0].strip()
-                q_mfy = params.get("mfy", [""])[0].strip()
-
-                def clean_geo_key(s):
-                    s = str(s or '').lower()
-                    s = s.replace('‘', '').replace('’', '').replace("'", "").replace('`', '')
-                    s = re.sub(r'(?:viloyati|tumani|shahri|shahar|respublikasi|mfy|m\.f\.y|mahalla|ovul|qishloq|kochasi|ko‘chasi|k\.)', '', s)
-                    s = re.sub(r'[^a-z0-9]', '', s)
-                    return s
-
-                def norm_key(s):
-                    return clean_geo_key(s)
-
-                def is_geo_match(target, actual):
-                    if not target or not actual:
-                        return True
-                    t = clean_geo_key(target)
-                    a = clean_geo_key(actual)
-                    if not t or not a:
-                        return True
-                    return (t == a) or (t in a) or (a in t)
-
-                target_mfy = clean_geo_key(q_mfy)
-                target_dist = clean_geo_key(q_dist)
-                target_reg = clean_geo_key(q_reg)
-
-                # Agar aholi hali manzil kiritmagan bo'lsa (yangi tozalangan holat), mutlaqo mashina ko'rsatilmasin!
-                if not target_mfy or target_mfy in ["none", "null", "undefined"]:
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/json")
-                    self.send_header("Access-Control-Allow-Origin", "*")
-                    self.end_headers()
-                    self.wfile.write(json.dumps({"status": "ok", "trucks": []}).encode("utf-8"))
-                    return
-
                 try:
-                    db_trucks = db_manager.get_active_trucks(region=q_reg, district=q_dist, mfy=q_mfy)
+                    db_trucks = db_manager.get_active_trucks()
                 except Exception as _dbe:
                     db_trucks = []
 
                 response_trucks = []
                 seen_plates = set()
 
-                # 1. Add all live drivers currently in active_driver_states
+                # 1. Add all live drivers currently in active_driver_states (real-time telemetry)
                 for cp, ds in list(active_driver_states.items()):
-                    st = str(ds.get("status", "")).strip().lower()
-                    if st in ["waiting", "idle", "paused", "stopped", "kutish"] or not st:
-                        continue
                     if ds.get("is_active", 1) == 0:
-                        continue
-                    if time.time() - ds.get("updated_at", 0) > 420:
                         continue
 
                     d_lat = ds.get("lat")
@@ -3884,14 +3841,6 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                     if d_lat is None or d_lng is None:
                         d_lat = 38.665
                         d_lng = 65.698
-
-                    # Qat'iy MFY, tuman, viloyat mosligi: aniq va yumshoq moslik
-                    if not is_geo_match(q_mfy, ds.get("mfy", "")):
-                        continue
-                    if q_dist and not is_geo_match(q_dist, ds.get("district", "")):
-                        continue
-                    if q_reg and not is_geo_match(q_reg, ds.get("region", "")):
-                        continue
 
                     raw_phone = str(ds.get("phone", "") or ds.get("account_phone", ""))
                     t_plate = str(ds.get("truck_plate", "")).strip()
@@ -3919,36 +3868,22 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                             "stage": ds.get("stage", "collect"),
                             "street": ds.get("street", "istiqlol"),
                             "street_name": ds.get("street_name", "Istiqlol ko‘chasi"),
-                            "mfy": ds.get("mfy", q_mfy),
-                            "district": ds.get("district", q_dist),
-                            "region": ds.get("region", q_reg),
+                            "mfy": ds.get("mfy", "koksoy"),
+                            "district": ds.get("district", "nishon"),
+                            "region": ds.get("region", "qashqadaryo"),
                             "lat": float(d_lat),
                             "lng": float(d_lng),
                             "avatar_url": av_u
                         })
                         seen_plates.add(pl_clean)
 
-                # 2. Add from db_trucks (strictly exclude waiting / idle drivers)
+                # 2. Add from db_trucks (all registered drivers in database)
                 for dt in db_trucks:
-                    dt_st = str(dt.get("status", "")).strip().lower()
-                    if dt_st in ["waiting", "idle", "paused", "stopped", "kutish"] or not dt_st:
-                        continue
                     dt_lat = dt.get("lat")
                     dt_lng = dt.get("lng")
                     if dt_lat is None or dt_lng is None:
                         dt_lat = 38.665
                         dt_lng = 65.698
-
-                    dt_mfy = dt.get("live_mfy") or dt.get("assigned_mfy") or dt.get("mfy", "")
-                    dt_dist = dt.get("live_dist") or dt.get("assigned_district") or dt.get("district", "")
-                    dt_reg = dt.get("live_reg") or dt.get("assigned_region") or dt.get("region", "")
-
-                    if not is_geo_match(q_mfy, dt_mfy):
-                        continue
-                    if q_dist and not is_geo_match(q_dist, dt_dist):
-                        continue
-                    if q_reg and not is_geo_match(q_reg, dt_reg):
-                        continue
 
                     dt_plate = str(dt.get("truck_plate", "")).strip()
                     dt_phone = str(dt.get("phone", ""))
@@ -3970,9 +3905,9 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                             "stage": dt.get("stage", "collect"),
                             "street": dt.get("street", "istiqlol"),
                             "street_name": dt.get("street_name", "Istiqlol ko‘chasi"),
-                            "mfy": dt.get("live_mfy") or dt.get("assigned_mfy", q_mfy),
-                            "district": dt.get("live_dist") or dt.get("assigned_district", q_dist),
-                            "region": dt.get("live_reg") or dt.get("assigned_region", q_reg),
+                            "mfy": dt.get("live_mfy") or dt.get("assigned_mfy", "koksoy"),
+                            "district": dt.get("live_dist") or dt.get("assigned_district", "nishon"),
+                            "region": dt.get("live_reg") or dt.get("assigned_region", "qashqadaryo"),
                             "lat": float(dt_lat),
                             "lng": float(dt_lng),
                             "avatar_url": dt_av
