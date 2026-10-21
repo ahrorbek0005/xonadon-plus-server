@@ -62,7 +62,7 @@ def init_db():
         district TEXT DEFAULT 'nishon',
         mfy TEXT DEFAULT 'koksoy',
         street TEXT DEFAULT 'koksoy_markaziy',
-        house_number TEXT DEFAULT '1-uy',
+        house_number TEXT DEFAULT '',
         pin_code TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
@@ -190,7 +190,7 @@ def generate_unique_account_id(prefix="XP-"):
     return f"{prefix}{int(time.time() * 1000) % 1000000:06d}"
 
 # --- USER FUNCTIONS ---
-def register_user(phone, full_name, role='resident', region='qashqadaryo', district='nishon', mfy='koksoy', street='koksoy_markaziy', house_number='1-uy'):
+def register_user(phone, full_name, role='resident', region='qashqadaryo', district='nishon', mfy='koksoy', street='koksoy_markaziy', house_number=''):
     clean_p = phone.strip()
     conn = get_connection()
     c = conn.cursor()
@@ -276,6 +276,50 @@ def get_user_by_phone(phone):
         user_dict["account_id"] = acc_id
     conn.close()
     return user_dict
+
+def get_user_by_account_id(account_id):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT * FROM users WHERE account_id = ?", (account_id.strip(),))
+    row = c.fetchone()
+    if not row:
+        # Check without XP- prefix or partial
+        c.execute("SELECT * FROM users WHERE account_id LIKE ?", (f"%{account_id.strip()}%",))
+        row = c.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def delete_user_by_id(user_id):
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+    return True
+
+def get_filtered_users(region=None, district=None, mfy=None, street=None):
+    conn = get_connection()
+    c = conn.cursor()
+    query = "SELECT * FROM users WHERE role = 'resident'"
+    params = []
+    if region:
+        query += " AND region = ?"
+        params.append(region)
+    if district:
+        query += " AND district = ?"
+        params.append(district)
+    if mfy:
+        query += " AND mfy = ?"
+        params.append(mfy)
+    if street:
+        query += " AND street = ?"
+        params.append(street)
+    query += " ORDER BY region, district, mfy, street, full_name ASC"
+    c.execute(query, params)
+    rows = [dict(r) for r in c.fetchall()]
+    conn.close()
+    return rows
+
 
 
 # --- DRIVER FUNCTIONS ---

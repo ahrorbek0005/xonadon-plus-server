@@ -2879,13 +2879,13 @@ def handle_start(chat_id, user_info):
             f"telefon raqamingizni tasdiqlashingiz lozim.\n\n"
             f"<b>Quyidagi usullardan birini tanlang:</b>\n"
             f"1️⃣ Pastdagi <b>«📱 Telefon raqamni ulashish»</b> tugmasini bosing (Telegram orqali tezkor va xavfsiz)\n"
-            f"2️⃣ Yoki telefon raqamingizni yozib yuboring (Masalan: <code>+998940401009</code>) — raqamingizga 4 xonali SMS kod yuboriladi."
+            f"2️⃣ Yoki telefon raqamingizni yozib yuboring (Masalan: <code>+998912345678</code>) — raqamingizga 4 xonali SMS kod yuboriladi."
         )
         send_message(chat_id, prompt_text, reply_markup=get_contact_keyboard(), parse_mode="HTML")
         return
 
     # Agar allaqachon tasdiqlangan bo'lsa -> Asosiy menyu ko'rsatiladi
-    phone_display = safe_html(user_sub.get("phone", "+998 (94) 040-10-09"))
+    phone_display = safe_html(user_sub.get("phone", "+998 (91) 234-56-78"))
     u_addr = safe_html(user_sub.get("address", {}).get("street_label", "Istiqlol ko‘chasi"))
 
     welcome_text = (
@@ -2938,8 +2938,43 @@ def handle_message(msg):
             user_sub["raw_phone"] = digits
             user_sub["phone"] = formatted
             user_sub["phone_verified"] = True
-            user_sub["status"] = "awaiting_address"
             user_sub["phone_verified_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+
+            # Serverda bu raqamga biriktirilgan XP- ID bor-yo'qligini tekshiramiz
+            existing_user = db_manager.get_user_by_phone(formatted)
+            if existing_user and existing_user.get("account_id") and existing_user.get("account_id").startswith("XP-"):
+                user_sub["account_id"] = existing_user["account_id"]
+                user_sub["status"] = "verified"
+                if existing_user.get("region") and existing_user.get("district") and existing_user.get("mfy") and existing_user.get("street"):
+                    reg_k = existing_user["region"]
+                    dist_k = existing_user["district"]
+                    mfy_k = existing_user["mfy"]
+                    st_k = existing_user["street"]
+                    reg_n = ADDRESS_DB.get(reg_k, {}).get("name", reg_k)
+                    dist_n = ADDRESS_DB.get(reg_k, {}).get("districts", {}).get(dist_k, {}).get("name", dist_k)
+                    mfy_n = ADDRESS_DB.get(reg_k, {}).get("districts", {}).get(dist_k, {}).get("mfys", {}).get(mfy_k, {}).get("name", mfy_k)
+                    st_n = ADDRESS_DB.get(reg_k, {}).get("districts", {}).get(dist_k, {}).get("mfys", {}).get(mfy_k, {}).get("streets", {}).get(st_k, st_k)
+                    full_addr = f"{reg_n}, {dist_n}, {mfy_n}, {st_n}"
+                    user_sub["address"] = {"region": reg_k, "district": dist_k, "mfy": mfy_k, "street": st_k, "street_label": full_addr}
+                    user_sub["address_text"] = full_addr
+                save_subscribers(subs)
+                warn_already = (
+                    "⚠️ <b>Siz botimizda allaqachon ro‘yxatdan o‘tgansiz!</b>\n\n"
+                    f"📱 <b>Telefon raqamingiz:</b> <code>{formatted}</code>\n"
+                    f"🆔 <b>Maxsus ID-ingiz:</b> <code>{existing_user['account_id']}</code>\n\n"
+                    "Quyidagi asosiy menyu orqali barcha xizmatlardan foydalanishingiz mumkin 👇"
+                )
+                send_message(chat_id, warn_already, reply_markup=get_main_keyboard(chat_id), parse_mode="HTML")
+                return
+
+            user_sub["status"] = "awaiting_address"
+            try:
+                u_reg = db_manager.register_user(formatted, user_info.get("first_name", "Aholi"), role='resident')
+                acc_id = u_reg.get("user", {}).get("account_id") if u_reg else None
+                if acc_id:
+                    user_sub["account_id"] = acc_id
+            except Exception as e:
+                logger.error(f"Error registering user in db on contact: {e}")
             save_subscribers(subs)
 
             conf_text = (
@@ -2971,6 +3006,94 @@ def handle_message(msg):
 
     text = msg.get("text", "").strip()
 
+
+    # --- ADMIN: Aholini qidirish ---
+    if text in ["🔍 Aholini qidirish", "/search_user"]:
+        if not user_sub.get("is_admin_active"):
+            send_message(chat_id, "⚠️ Ushbu bo‘lim faqat tizim admini uchun ochiq. Avval /admin buyrug‘ini bering.")
+            return
+        user_sub["admin_state"] = "awaiting_search_user"
+        save_subscribers(subs)
+        send_message(
+            chat_id,
+            "🔍 Fuqaroning <b>Telefon raqamini</b> (+998912345678) yoki <b>Maxsus ID-sini</b> (XP-123456) kiriting:\n"
+            "<i>(Masalan: +998912345678 yoki 123456)</i>",
+            parse_mode="HTML"
+        )
+        return
+
+    # --- ADMIN: Aholi ro'yxati (Excel) ---
+    if text in ["👥 Aholi ro‘yxati (Excel)", "/users_excel", "📋 Aholi ro‘yxati (Excel)"]:
+        if not user_sub.get("is_admin_active"):
+            send_message(chat_id, "⚠️ Ushbu bo‘lim faqat tizim admini uchun ochiq. Avval /admin buyrug‘ini bering.")
+            return
+        kb = {
+            "inline_keyboard": [
+                [{"text": "🇺🇿 Butun O‘zbekiston", "callback_data": "exp_u_all"}],
+                [{"text": "📍 Hududlar bo‘yicha", "callback_data": "exp_u_hudud"}],
+                [{"text": "⬅️ Admin panelga qaytish", "callback_data": "admin_back"}]
+            ]
+        }
+        send_message(
+            chat_id,
+            "📊 <b>AHOLI RO‘YXATINI EXCELDA YUKLAB OLISH</b>\n\n"
+            "Qaysi qamrovdagi fuqarolar ro‘yxatini yuklab olmoqchisiz?\n"
+            "Pastdagi variantlardan birini tanlang 👇",
+            reply_markup=kb,
+            parse_mode="HTML"
+        )
+        return
+
+    # Agar admin fuqaroni qidirayotgan bo'lsa
+    if user_sub.get("admin_state") == "awaiting_search_user":
+        query = text.strip()
+        user_row = db_manager.get_user_by_account_id(query) or db_manager.get_user_by_phone(query)
+        user_sub.pop("admin_state", None)
+        save_subscribers(subs)
+
+        if not user_row:
+            kb = {
+                "inline_keyboard": [
+                    [{"text": "🔄 Qayta qidirish", "callback_data": "admin_search_user"}],
+                    [{"text": "⬅️ Admin menyusiga qaytish", "callback_data": "admin_back"}]
+                ]
+            }
+            send_message(chat_id, f"❌ <b>«{safe_html(query)}» bo‘yicha hech qanday fuqaro topilmadi!</b>", reply_markup=kb, parse_mode="HTML")
+            return
+
+        u_id = user_row.get("id")
+        fname = safe_html(user_row.get("full_name") or "Aholi")
+        phone = safe_html(user_row.get("phone") or "+998912345678")
+        acc_id = safe_html(user_row.get("account_id") or "XP-104928")
+        
+        reg_k = user_row.get("region") or "qashqadaryo"
+        dist_k = user_row.get("district") or "nishon"
+        mfy_k = user_row.get("mfy") or "koksoy"
+        st_k = user_row.get("street") or "koksoy_markaziy"
+        
+        reg_n = ADDRESS_DB.get(reg_k, {}).get("name", reg_k)
+        dist_n = ADDRESS_DB.get(reg_k, {}).get("districts", {}).get(dist_k, {}).get("name", dist_k)
+        mfy_n = ADDRESS_DB.get(reg_k, {}).get("districts", {}).get(dist_k, {}).get("mfys", {}).get(mfy_k, {}).get("name", mfy_k)
+        st_n = ADDRESS_DB.get(reg_k, {}).get("districts", {}).get(dist_k, {}).get("mfys", {}).get(mfy_k, {}).get("streets", {}).get(st_k, st_k)
+        full_addr = f"{reg_n}, {dist_n}, {mfy_n} MFY, {st_n}"
+
+        info_text = (
+            "👤 <b>FUQARO MA’LUMOTLARI</b>\n\n"
+            f"👤 <b>Ism va Familiya:</b> {fname}\n"
+            f"🆔 <b>Maxsus ID:</b> <code>{acc_id}</code>\n"
+            f"📱 <b>Telefon raqami:</b> <code>{phone}</code>\n\n"
+            f"📍 <b>Ro‘yxatdan o‘tgan to‘liq manzili:</b>\n<i>{safe_html(full_addr)}</i>"
+        )
+        kb = {
+            "inline_keyboard": [
+                [{"text": "🗑 Fuqaroni tizimdan o‘chirish", "callback_data": f"del_user:{u_id}"}],
+                [{"text": "🔍 Boshqa fuqaroni qidirish", "callback_data": "admin_search_user"}],
+                [{"text": "⬅️ Admin menyusiga qaytish", "callback_data": "admin_back"}]
+            ]
+        }
+        send_message(chat_id, info_text, reply_markup=kb, parse_mode="HTML")
+        return
+
     # --- ADMIN BOSHQARUVI (/admin_login yoki /admin) ---
     if text.startswith("/admin_login") or text == "/admin" or text.startswith("/admin "):
         parts = text.split(maxsplit=1)
@@ -2984,22 +3107,34 @@ def handle_message(msg):
             admin_menu_text = (
                 "👑 <b>XONADON+ BOSHQARUV PANELI (BOSH ADMIN)</b>\n\n"
                 "Xush kelibsiz, Administrator! Ushbu bo‘lim faqat sizga ko‘rinadi.\n"
-                "Tizimni quyidagi buyruqlar orqali boshqarishingiz mumkin:\n\n"
-                "➕ <b>/add_driver</b> — Yangi haydovchi qo‘shish (Login & Parol berish)\n"
+                "Tizimni boshqarish uchun pastdagi tugmalardan foydalanishingiz mumkin:\n\n"
                 "🔍 <b>/search_driver</b> — Haydovchini qidirish\n"
-                "📋 <b>/drivers</b> — Barcha faol haydovchilar ro‘yxati\n"
-                "👥 <b>/users</b> — Ro‘yxatdan o‘tgan fuqarolar statistikasi\n"
+                "🔍 <b>/search_user</b> — Aholini qidirish\n"
+                "➕ <b>/add_driver</b> — Yangi haydovchi qo‘shish\n"
+                "📋 <b>/drivers</b> — Barcha haydovchilar ro‘yxati\n"
+                "👥 <b>/users_excel</b> — Aholi ro‘yxati (Excel yuklab olish)\n"
+                "📊 <b>/users</b> — Fuqarolar statistikasi\n"
                 "🚪 <b>/exit_admin</b> — Admin rejimidan chiqish"
             )
+            inline_admin_kb = {
+                "inline_keyboard": [
+                    [{"text": "🔍 Haydovchini qidirish", "callback_data": "admin_search_driver"}, {"text": "🔍 Aholini qidirish", "callback_data": "admin_search_user"}],
+                    [{"text": "➕ Yangi haydovchi qo‘shish", "callback_data": "admin_add_driver"}],
+                    [{"text": "📋 Haydovchilar ro‘yxati", "callback_data": "admin_list_drivers"}, {"text": "👥 Aholi ro‘yxati (Excel)", "callback_data": "admin_users_excel"}],
+                    [{"text": "📊 Fuqarolar statistikasi", "callback_data": "admin_users_stat"}],
+                    [{"text": "🚪 Admin rejimidan chiqish", "callback_data": "admin_exit"}]
+                ]
+            }
             keyboard = {
                 "keyboard": [
-                    [{"text": "➕ Yangi haydovchi qo‘shish"}, {"text": "🔍 Haydovchini qidirish"}],
+                    [{"text": "🔍 Haydovchini qidirish"}, {"text": "🔍 Aholini qidirish"}],
+                    [{"text": "➕ Yangi haydovchi qo‘shish"}, {"text": "👥 Aholi ro‘yxati (Excel)"}],
                     [{"text": "📋 Haydovchilar ro‘yxati"}, {"text": "👥 Fuqarolar statistikasi"}],
                     [{"text": "⬅️ Asosiy menyuga qaytish"}]
                 ],
                 "resize_keyboard": True
             }
-            send_message(chat_id, admin_menu_text, reply_markup=keyboard, parse_mode="HTML")
+            send_message(chat_id, admin_menu_text, reply_markup=inline_admin_kb, parse_mode="HTML")
             return
         else:
             user_sub["admin_login_pending"] = True
@@ -3021,28 +3156,29 @@ def handle_message(msg):
             admin_menu_text = (
                 "👑 <b>XONADON+ BOSHQARUV PANELI (BOSH ADMIN)</b>\n\n"
                 "Xush kelibsiz, Administrator! Ushbu bo‘lim faqat sizga ko‘rinadi.\n"
-                "Tizimni quyidagi buyruqlar orqali boshqarishingiz mumkin:\n\n"
-                "➕ <b>/add_driver</b> — Yangi haydovchi qo‘shish (Login & Parol berish)\n"
+                "Tizimni boshqarish uchun pastdagi tugmalardan foydalanishingiz mumkin:\n\n"
                 "🔍 <b>/search_driver</b> — Haydovchini qidirish\n"
+                "➕ <b>/add_driver</b> — Yangi haydovchi qo‘shish (Login & Parol berish)\n"
                 "📋 <b>/drivers</b> — Barcha faol haydovchilar ro‘yxati\n"
                 "👥 <b>/users</b> — Ro‘yxatdan o‘tgan fuqarolar statistikasi\n"
                 "🚪 <b>/exit_admin</b> — Admin rejimidan chiqish"
             )
-            keyboard = {
-                "keyboard": [
-                    [{"text": "➕ Yangi haydovchi qo‘shish"}, {"text": "🔍 Haydovchini qidirish"}],
-                    [{"text": "📋 Haydovchilar ro‘yxati"}, {"text": "👥 Fuqarolar statistikasi"}],
-                    [{"text": "⬅️ Asosiy menyuga qaytish"}]
-                ],
-                "resize_keyboard": True
+            inline_admin_kb = {
+                "inline_keyboard": [
+                    [{"text": "🔍 Haydovchini qidirish", "callback_data": "admin_search_driver"}],
+                    [{"text": "➕ Yangi haydovchi qo‘shish", "callback_data": "admin_add_driver"}],
+                    [{"text": "📋 Haydovchilar ro‘yxati", "callback_data": "admin_list_drivers"}, {"text": "👥 Fuqarolar statistikasi", "callback_data": "admin_users_stat"}],
+                    [{"text": "🚪 Admin rejimidan chiqish", "callback_data": "admin_exit"}]
+                ]
             }
-            send_message(chat_id, admin_menu_text, reply_markup=keyboard, parse_mode="HTML")
+            send_message(chat_id, admin_menu_text, reply_markup=inline_admin_kb, parse_mode="HTML")
             return
         elif text in ["/start", "⬅️ Asosiy menyuga qaytish"]:
             user_sub.pop("admin_login_pending", None)
             save_subscribers(subs)
         else:
             send_message(chat_id, "❌ <b>Noto‘g‘ri parol!</b> Iltimos, maxsus admin parolini qaytadan kiriting:", parse_mode="HTML")
+            return
             return
 
     # Helper function to send driver card with Edit and Delete inline buttons
@@ -3422,7 +3558,7 @@ def handle_message(msg):
             user_sub["status"] = "unverified"
             save_subscribers(subs)
             prompt = (
-                "📱 Yangi telefon raqamingizni kiriting (Masalan: <code>+998940401009</code>) "
+                "📱 Yangi telefon raqamingizni kiriting (Masalan: <code>+998912345678</code>) "
                 "yoki pastdagi <b>«📱 Telefon raqamni ulashish»</b> tugmasini bosing:"
             )
             send_message(chat_id, prompt, reply_markup=get_contact_keyboard(), parse_mode="HTML")
@@ -3431,8 +3567,8 @@ def handle_message(msg):
         expected_otp = user_sub.get("pending_otp", "7824")
         if text == expected_otp or text == "7824":
             # SMS kod to'g'ri kiritildi!
-            verified_phone = user_sub.get("pending_phone", "+998 (94) 040-10-09")
-            verified_raw = user_sub.get("pending_raw", "998940401009")
+            verified_phone = user_sub.get("pending_phone", "+998 (91) 234-56-78")
+            verified_raw = user_sub.get("pending_raw", "998912345678")
 
             user_sub["phone"] = verified_phone
             user_sub["raw_phone"] = verified_raw
@@ -3440,6 +3576,13 @@ def handle_message(msg):
             user_sub["status"] = "verified"
             user_sub["phone_verified_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
             user_sub.pop("pending_otp", None)
+            try:
+                u_reg = db_manager.register_user(verified_phone, user_info.get("first_name", "Aholi"), role='resident')
+                acc_id = u_reg.get("user", {}).get("account_id") if u_reg else None
+                if acc_id:
+                    user_sub["account_id"] = acc_id
+            except Exception as e:
+                logger.error(f"Error registering user in db on otp: {e}")
             save_subscribers(subs)
 
             conf_text = (
@@ -3468,7 +3611,35 @@ def handle_message(msg):
     if not user_sub.get("phone_verified"):
         digits, formatted = normalize_phone(text)
         if digits:
-            # Foydalanuvchi telefon raqamini matn sifatida yubordi -> SMS kod jo'natiladi!
+            existing_user = db_manager.get_user_by_phone(formatted)
+            if existing_user and existing_user.get("account_id") and existing_user.get("account_id").startswith("XP-"):
+                user_sub["raw_phone"] = digits
+                user_sub["phone"] = formatted
+                user_sub["phone_verified"] = True
+                user_sub["account_id"] = existing_user["account_id"]
+                user_sub["status"] = "verified"
+                if existing_user.get("region") and existing_user.get("district") and existing_user.get("mfy") and existing_user.get("street"):
+                    reg_k = existing_user["region"]
+                    dist_k = existing_user["district"]
+                    mfy_k = existing_user["mfy"]
+                    st_k = existing_user["street"]
+                    reg_n = ADDRESS_DB.get(reg_k, {}).get("name", reg_k)
+                    dist_n = ADDRESS_DB.get(reg_k, {}).get("districts", {}).get(dist_k, {}).get("name", dist_k)
+                    mfy_n = ADDRESS_DB.get(reg_k, {}).get("districts", {}).get(dist_k, {}).get("mfys", {}).get(mfy_k, {}).get("name", mfy_k)
+                    st_n = ADDRESS_DB.get(reg_k, {}).get("districts", {}).get(dist_k, {}).get("mfys", {}).get(mfy_k, {}).get("streets", {}).get(st_k, st_k)
+                    full_addr = f"{reg_n}, {dist_n}, {mfy_n}, {st_n}"
+                    user_sub["address"] = {"region": reg_k, "district": dist_k, "mfy": mfy_k, "street": st_k, "street_label": full_addr}
+                    user_sub["address_text"] = full_addr
+                save_subscribers(subs)
+                warn_already = (
+                    "⚠️ <b>Siz botimizda allaqachon ro‘yxatdan o‘tgansiz!</b>\n\n"
+                    f"📱 <b>Telefon raqamingiz:</b> <code>{formatted}</code>\n"
+                    f"🆔 <b>Maxsus ID-ingiz:</b> <code>{existing_user['account_id']}</code>\n\n"
+                    "Quyidagi asosiy menyu orqali barcha xizmatlardan foydalanishingiz mumkin 👇"
+                )
+                send_message(chat_id, warn_already, reply_markup=get_main_keyboard(chat_id), parse_mode="HTML")
+                return
+            # Yangi raqam -> SMS kod jo'natiladi!
             user_sub["pending_phone"] = formatted
             user_sub["pending_raw"] = digits
             user_sub["pending_otp"] = "7824"
@@ -3488,21 +3659,65 @@ def handle_message(msg):
             prompt_text = (
                 "⚠️ <b>Diqqat:</b> Xonadon+ tizimidan foydalanish va gaz mashinasi bildirishnomalarini olish uchun "
                 "avval telefon raqamingizni tasdiqlashingiz lozim.\n\n"
-                "Iltimos, pastdagi <b>«📱 Telefon raqamni ulashish»</b> tugmasini bosing yoki telefon raqamingizni yozib yuboring (Masalan: <code>+998940401009</code>):"
+                "Iltimos, pastdagi <b>«📱 Telefon raqamni ulashish»</b> tugmasini bosing yoki telefon raqamingizni yozib yuboring (Masalan: <code>+998912345678</code>):"
             )
             send_message(chat_id, prompt_text, reply_markup=get_contact_keyboard(), parse_mode="HTML")
             return
 
     # 4. TASDIQLANGAN FOYDALANUVCHILAR UCHUN MENYU KOMANDALARI
 
-    # Agar foydalanuvchi manzil tanlash bosqichida matn yozsa -> Faqat tugmalardan tanlashini so'raymiz
-    if user_sub.get("status") == "awaiting_address" and text and not text.startswith("/") and not text.startswith("⬅️"):
-        warn_msg = (
-            "⚠️ <b>Manzil faqat bot tugmalari orqali tanlanadi!</b>\n\n"
-            "Tizimda yo‘q manzillar kiritilishi va gaz yetkazib berishda xatoliklar kelib chiqishining oldini olish uchun, "
-            "iltimos, viloyat, tuman, mahalla va ko‘changizni <b>pastdagi tugmalar</b> orqali ketma-ket tanlang 👇"
+    # Foydalanuvchi profili va telefon raqam (Har doim birinchi ishlaydi)
+    if text == "👤 Profilim va Telefon raqam" or text == "/profil" or text == "/telefon":
+        phone_val = safe_html(user_sub.get("phone") or user_sub.get("pending_phone") or "+998 (91) 234-56-78")
+        first_n = safe_html(user_sub.get("first_name", user_info.get("first_name", "Fuqaro")))
+        uname = user_sub.get("username", user_info.get("username", ""))
+        uname_str = f"@{uname}" if uname else "Mavjud emas"
+
+        # Aniq manzilni ko'cha darajasida (uy raqamisiz) formatlash
+        addr_obj = user_sub.get("address", {})
+        raw_addr = user_sub.get("address_text") or addr_obj.get("street_label", "")
+        if raw_addr:
+            clean_addr = re.sub(r',?\s*\d+-uy.*$', '', raw_addr, flags=re.IGNORECASE).strip()
+            addr_val = safe_html(clean_addr)
+        else:
+            addr_val = "<i>Belgilanmagan (Iltimos, «📍 Manzilimni biriktirish» tugmasi orqali tanlang)</i>"
+
+        # XP- ID ni aniqlash yoki bazadan olish
+        acc_id = user_sub.get("account_id")
+        if not acc_id:
+            try:
+                u_row = db_manager.get_user_by_phone(user_sub.get("phone", ""))
+                if u_row and u_row.get("account_id"):
+                    acc_id = u_row["account_id"]
+                    user_sub["account_id"] = acc_id
+                    save_subscribers(subs)
+                else:
+                    acc_id = db_manager.generate_unique_account_id("XP-")
+                    user_sub["account_id"] = acc_id
+                    save_subscribers(subs)
+            except Exception as e:
+                logger.error(f"Error resolving account_id: {e}")
+                acc_id = "XP-104928"
+
+        profile_text = (
+            f"👤 <b>FOYDALANUVCHI SHAXSIY PROFILI</b>\n\n"
+            f"📱 <b>Tasdiqlangan telefon:</b> <code>{phone_val}</code> ✅\n"
+            f"🆔 <b>Maxsus ID:</b> <code>{acc_id}</code>\n"
+            f"👤 <b>Ism:</b> {first_n}\n"
+            f"💬 <b>Telegram:</b> <code>{safe_html(uname_str)}</code>\n"
+            f"🆔 <b>Telegram ID:</b> <code>{chat_id}</code>\n\n"
+            f"📍 <b>Biriktirilgan rasmiy manzil:</b>\n{addr_val}\n\n"
+            f"🔗 <b>Xonadon+ Veb-ilovasi bilan integratsiya:</b> 🟢 Bog‘langan (Sinxronlangan)\n"
+            f"🛡️ <b>Xavfsizlik darajasi:</b> Yuqori (SMS / Kontakt tasdiqlangan)\n"
+            f"🔔 <b>Gaz mashinasi ogohlantirishlari:</b> 🟢 Faol"
         )
-        send_message(chat_id, warn_msg, reply_markup=get_region_keyboard(), parse_mode="HTML")
+        kb = {
+            "inline_keyboard": [
+                [{"text": "🔄 Telefon raqamni o‘zgartirish", "callback_data": "change_phone"}],
+                [{"text": "📍 Manzilni o‘zgartirish", "callback_data": "back_to_reg"}]
+            ]
+        }
+        send_message(chat_id, profile_text, reply_markup=kb, parse_mode="HTML")
         return
 
     # Manzilni biriktirish / Manzilni o'zgartirish (Faqat tugmalar orqali ketma-ket tanlash)
@@ -3510,6 +3725,8 @@ def handle_message(msg):
         user_sub["status"] = "awaiting_address"
         save_subscribers(subs)
         curr_addr = user_sub.get("address_text") or user_sub.get("address", {}).get("street_label", "")
+        if curr_addr:
+            curr_addr = re.sub(r',?\s*\d+-uy.*$', '', curr_addr, flags=re.IGNORECASE).strip()
         curr_info = f"\n\n📌 <b>Amaldagi manzil:</b> <i>{safe_html(curr_addr)}</i>" if curr_addr else ""
         prompt = (
             f"📍 <b>Xonadon manzilingizni tanlang:</b>{curr_info}\n\n"
@@ -3608,34 +3825,15 @@ def handle_message(msg):
         send_message(chat_id, safety_text, parse_mode="HTML")
         return
 
-    # Foydalanuvchi profili va telefon raqam
-    if text == "👤 Profilim va Telefon raqam" or text == "/profil" or text == "/telefon":
-        phone_val = safe_html(user_sub.get("phone", "+998 (94) 040-10-09"))
-        addr_val = safe_html(user_sub.get("address", {}).get("street_label", "Belgilanmagan"))
-        first_n = safe_html(user_sub.get("first_name", user_info.get("first_name", "Fuqaro")))
-        uname = user_sub.get("username", user_info.get("username", ""))
-        uname_str = f"@{uname}" if uname else "Mavjud emas"
-
-        profile_text = (
-            f"👤 <b>FOYDALANUVCHI SHAXSIY PROFILI</b>\n\n"
-            f"📱 <b>Tasdiqlangan telefon:</b> <code>{phone_val}</code> ✅\n"
-            f"👤 <b>Ism:</b> {first_n}\n"
-            f"💬 <b>Telegram:</b> <code>{safe_html(uname_str)}</code>\n"
-            f"🆔 <b>Telegram ID:</b> <code>{chat_id}</code>\n\n"
-            f"📍 <b>Biriktirilgan manzil:</b>\n<i>{addr_val}</i>\n\n"
-            f"🔗 <b>Xonadon+ Veb-ilovasi bilan integratsiya:</b> 🟢 Bog‘langan (Sinxronlangan)\n"
-            f"🛡️ <b>Xavfsizlik darajasi:</b> Yuqori (SMS / Kontakt tasdiqlangan)\n"
-            f"🔔 <b>Gaz mashinasi ogohlantirishlari:</b> 🟢 Faol"
+    # Agar yuqoridagi menyu tugmalaridan biri bo'lmasa va foydalanuvchi manzil tanlash bosqichida bo'lsa
+    if user_sub.get("status") == "awaiting_address" and text and not text.startswith("/") and not text.startswith("⬅️"):
+        warn_msg = (
+            "⚠️ <b>Manzil faqat bot tugmalari orqali tanlanadi!</b>\n\n"
+            "Tizimda yo‘q manzillar kiritilishi va gaz yetkazib berishda xatoliklar kelib chiqishining oldini olish uchun, "
+            "iltimos, viloyat, tuman, mahalla va ko‘changizni <b>pastdagi tugmalar</b> orqali ketma-ket tanlang 👇"
         )
-        kb = {
-            "inline_keyboard": [
-                [{"text": "🔄 Telefon raqamni o‘zgartirish", "callback_data": "change_phone"}],
-                [{"text": "📍 Manzilni o‘zgartirish", "callback_data": "back_to_reg"}]
-            ]
-        }
-        send_message(chat_id, profile_text, reply_markup=kb, parse_mode="HTML")
+        send_message(chat_id, warn_msg, reply_markup=get_region_keyboard(), parse_mode="HTML")
         return
-
     # Default javob
     send_message(
         chat_id,
@@ -3655,6 +3853,94 @@ def handle_callback(cb):
     msg_id = msg.get("message_id")
 
     answer_callback(cb_id)
+
+    # --- ADMIN BOSHQARUV TUGMALARI (CALLBACKS) ---
+    if data == "admin_search_driver":
+        search_kb = {
+            "inline_keyboard": [
+                [{"text": "🆔 ID orqali qidirish", "callback_data": "search_by_id"}],
+                [{"text": "📱 Telefon raqam orqali qidirish", "callback_data": "search_by_phone"}],
+                [{"text": "⬅️ Admin menyusiga qaytish", "callback_data": "admin_back_menu"}]
+            ]
+        }
+        send_message(chat_id, "🔍 <b>HAYDOVCHINI QIDIRISH:</b>\n\nQidirish usulini tanlang 👇", reply_markup=search_kb, parse_mode="HTML")
+        return
+
+    if data == "search_by_id":
+        subs = load_subscribers()
+        subs.setdefault(str(chat_id), {})["admin_state"] = "awaiting_search_driver_id"
+        save_subscribers(subs)
+        send_message(chat_id, "🆔 Haydovchining <b>Maxsus ID-sini</b> kiriting:\n<i>(Masalan: HP-123456 yoki shunchaki 123456)</i>", parse_mode="HTML")
+        return
+
+    if data == "search_by_phone":
+        subs = load_subscribers()
+        subs.setdefault(str(chat_id), {})["admin_state"] = "awaiting_search_driver_phone"
+        save_subscribers(subs)
+        send_message(chat_id, "📱 Haydovchining <b>Telefon raqamini</b> kiriting:\n<i>(Masalan: +998912345678 yoki 912345678)</i>", parse_mode="HTML")
+        return
+
+    if data == "admin_add_driver":
+        subs = load_subscribers()
+        subs.setdefault(str(chat_id), {})["admin_state"] = "awaiting_driver_name"
+        save_subscribers(subs)
+        msg_prompt = (
+            "➕ <b>YANGI HAYDOVCHI QO‘SHISH (1/4-bosqich)</b>\n\n"
+            "1️⃣ Iltimos, yangi haydovchining <b>Ism va Familiyasini</b> kiriting:\n"
+            "<i>(Masalan: Ahror Suyunov)</i>"
+        )
+        send_message(chat_id, msg_prompt, parse_mode="HTML")
+        return
+
+    if data == "admin_list_drivers":
+        drivers = db_manager.get_all_drivers()
+        if not drivers:
+            send_message(chat_id, "Hozircha tizimda haydovchilar yo‘q.")
+            return
+        send_message(chat_id, f"📋 <b>TIZIMDAGI HAYDOVCHILAR (Jami: {len(drivers)} ta):</b>\n<i>Tahrirlash yoki o‘chirish uchun kerakli tugmani bosing:</i>", parse_mode="HTML")
+        for d in drivers:
+            send_driver_card(chat_id, d)
+        return
+
+    if data == "admin_users_stat":
+        conn = db_manager.get_connection()
+        c = conn.cursor()
+        c.execute("SELECT COUNT(*) as u_count FROM users WHERE role = 'resident'")
+        u_count = c.fetchone()["u_count"]
+        c.execute("SELECT COUNT(*) as s_count FROM sessions WHERE is_active = 1")
+        s_count = c.fetchone()["s_count"]
+        conn.close()
+        subs = load_subscribers()
+        stat_text = (
+            f"📊 <b>XONADON+ TIZIM STATISTIKASI:</b>\n\n"
+            f"👤 Ro‘yxatdan o‘tgan fuqarolar: <b>{u_count} ta</b>\n"
+            f"📱 Faol seanslar (qurilmalar): <b>{s_count} ta</b>\n"
+            f"🤖 Telegram bot obunachilari: <b>{len(subs)} ta</b>\n"
+            f"📍 Pilot hudud: <b>Qashqadaryo, Nishon tumani, «Ko‘ksoy» MFY</b>"
+        )
+        send_message(chat_id, stat_text, parse_mode="HTML")
+        return
+
+    if data == "admin_exit":
+        subs = load_subscribers()
+        u_sub = subs.setdefault(str(chat_id), {})
+        u_sub.pop("admin_state", None)
+        u_sub.pop("is_admin_active", None)
+        save_subscribers(subs)
+        send_message(chat_id, "Asosiy menyuga qaytdingiz.", reply_markup=get_main_keyboard(chat_id))
+        return
+
+    if data == "admin_back_menu":
+        inline_admin_kb = {
+            "inline_keyboard": [
+                [{"text": "🔍 Haydovchini qidirish", "callback_data": "admin_search_driver"}],
+                [{"text": "➕ Yangi haydovchi qo‘shish", "callback_data": "admin_add_driver"}],
+                [{"text": "📋 Haydovchilar ro‘yxati", "callback_data": "admin_list_drivers"}, {"text": "👥 Fuqarolar statistikasi", "callback_data": "admin_users_stat"}],
+                [{"text": "🚪 Admin rejimidan chiqish", "callback_data": "admin_exit"}]
+            ]
+        }
+        send_message(chat_id, "👑 <b>Admin boshqaruv paneli:</b>", reply_markup=inline_admin_kb, parse_mode="HTML")
+        return
 
     # --- HAYDOVCHI TAHRIRLASH CALLBACKLARI ---
     if data.startswith("edtdrv_"):
@@ -3706,7 +3992,7 @@ def handle_callback(cb):
 
         prompts = {
             "full_name": "👤 Yangi <b>Ism va Familiyani</b> kiriting:\n<i>(Masalan: Ahror Suyunov)</i>",
-            "phone": "📱 Yangi <b>Telefon raqamini</b> kiriting:\n<i>(Masalan: +998992213991)</i>",
+            "phone": "📱 Yangi <b>Telefon raqamini</b> kiriting:\n<i>(Masalan: +998912345678)</i>",
             "truck_plate": "🚛 Mashinaning yangi <b>Davlat raqamini</b> kiriting:\n<i>(Masalan: 70M260EB)</i>",
             "password": "🔑 Yangi <b>Kirish parolini</b> kiriting:\n<i>(Masalan: ahror2005)</i>"
         }
@@ -3864,7 +4150,7 @@ def handle_callback(cb):
             save_subscribers(subs)
         send_message(
             chat_id,
-            "📱 Yangi telefon raqamingizni tasdiqlash uchun pastdagi <b>«📱 Telefon raqamni ulashish»</b> tugmasini bosing yoki raqamingizni yozib yuboring (Masalan: <code>+998940401009</code>):",
+            "📱 Yangi telefon raqamingizni tasdiqlash uchun pastdagi <b>«📱 Telefon raqamni ulashish»</b> tugmasini bosing yoki raqamingizni yozib yuboring (Masalan: <code>+998912345678</code>):",
             reply_markup=get_contact_keyboard(),
             parse_mode="HTML"
         )
@@ -3942,6 +4228,14 @@ def handle_callback(cb):
             "street": street_key,
             "street_label": full_addr
         }
+        subs[cid_str]["address_text"] = full_addr
+        subs[cid_str]["status"] = "verified"
+        try:
+            phone_for_db = subs[cid_str].get("phone") or subs[cid_str].get("raw_phone", "")
+            if phone_for_db:
+                db_manager.update_user_address(phone_for_db, reg_key, dist_key, mfy_key, street_key, house_number="")
+        except Exception as e:
+            logger.error(f"Error syncing street to db: {e}")
         save_subscribers(subs)
 
         success_text = (
@@ -4112,7 +4406,7 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                         except Exception:
                             pass
                 else:
-                    full_p = f"+998{last9}" if last9 else "+998940401009"
+                    full_p = f"+998{last9}" if last9 else "+998912345678"
                     u_dict = {
                         "phone": full_p,
                         "full_name": "Aholi",
@@ -5712,3 +6006,50 @@ if __name__ == "__main__":
 
     # Telegram bot polling ni asosiy oqimda yuritamiz
     run_telegram_polling()
+
+
+def generate_users_excel_csv(region=None, district=None, mfy=None, street=None):
+    users = db_manager.get_filtered_users(region=region, district=district, mfy=mfy, street=street)
+    if not users:
+        return None
+
+    # Group users by (region, district, mfy, street)
+    from collections import OrderedDict
+    grouped = OrderedDict()
+    for u in users:
+        reg_k = u.get("region") or "qashqadaryo"
+        dist_k = u.get("district") or "nishon"
+        mfy_k = u.get("mfy") or "koksoy"
+        st_k = u.get("street") or "koksoy_markaziy"
+        key = (reg_k, dist_k, mfy_k, st_k)
+        if key not in grouped:
+            grouped[key] = []
+        grouped[key].append(u)
+
+    import tempfile
+    tfile = os.path.join(tempfile.gettempdir(), f"Aholi_royxati_{int(time.time())}.csv")
+    with open(tfile, "w", encoding="utf-8-sig") as f:
+        # Write UTF-8 BOM
+        counter = 1
+        for (reg_k, dist_k, mfy_k, st_k), u_list in grouped.items():
+            reg_n = ADDRESS_DB.get(reg_k, {}).get("name", reg_k).upper()
+            dist_n = ADDRESS_DB.get(reg_k, {}).get("districts", {}).get(dist_k, {}).get("name", dist_k).upper()
+            mfy_n = ADDRESS_DB.get(reg_k, {}).get("districts", {}).get(dist_k, {}).get("mfys", {}).get(mfy_k, {}).get("name", mfy_k)
+            st_n = ADDRESS_DB.get(reg_k, {}).get("districts", {}).get(dist_k, {}).get("mfys", {}).get(mfy_k, {}).get("streets", {}).get(st_k, st_k)
+
+            f.write("=" * 100 + "\n")
+            mfy_clean = mfy_n.replace("«", "").replace("»", "").replace("MFY", "").replace("mfy", "").strip()
+            f.write(f"📍 {reg_n}, {dist_n}, «{mfy_clean}» MFY, {st_n.upper()}\n")
+            f.write("=" * 100 + "\n")
+            f.write("№,Maxsus ID,Ism va Familiya,Telefon raqami,Ro‘yxatdan o‘tgan to‘liq manzili\n")
+
+            for u in u_list:
+                acc_id = u.get("account_id") or "XP-104928"
+                fname = u.get("full_name") or "Fuqaro"
+                phone = u.get("phone") or "+998912345678"
+                full_addr = f"{ADDRESS_DB.get(reg_k, {}).get('name', reg_k)}, {ADDRESS_DB.get(reg_k, {}).get('districts', {}).get(dist_k, {}).get('name', dist_k)}, {mfy_n} MFY, {st_n}"
+                f.write(f'{counter},{acc_id},"{fname}",{phone},"{full_addr}"\n')
+                counter += 1
+            f.write("\n")
+
+    return tfile
