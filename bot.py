@@ -25,6 +25,11 @@ HTTP_PORT = int(os.environ.get("PORT", 3001))
 LOCK_PORT = int(os.environ.get("LOCK_PORT", 3005))
 
 # ========================================================
+# ADMIN MAXSUS KIRISH PAROLI (Xohlagan payt shu yerdan o‘zgartirishingiz mumkin)
+# ========================================================
+ADMIN_PASSWORD = "ahrorbek2005"
+
+# ========================================================
 # 0. SINGLE-INSTANCE LOCK (TAKRORIY BOT ISHGA TUSHISHINI TO'XTATISH)
 # ========================================================
 _lock_socket = None
@@ -2967,18 +2972,21 @@ def handle_message(msg):
     text = msg.get("text", "").strip()
 
     # --- ADMIN BOSHQARUVI (/admin_login yoki /admin) ---
-    if text.startswith("/admin_login") or text == "/admin":
-        parts = text.split()
-        if text == "/admin" and not db_manager.is_bot_admin(chat_id):
-            send_message(chat_id, "🔐 <b>Admin sifatida kirish:</b>\nIltimos, maxsus admin parolini kiriting:\nMasalan: <code>/admin_login GazAdmin2026</code>", parse_mode="HTML")
-            return
-        elif len(parts) > 1 and parts[1] == "GazAdmin2026" or db_manager.is_bot_admin(chat_id):
+    if text.startswith("/admin_login") or text == "/admin" or text.startswith("/admin "):
+        parts = text.split(maxsplit=1)
+        entered_pass = parts[1].strip() if len(parts) > 1 else None
+
+        if entered_pass and entered_pass == ADMIN_PASSWORD:
+            user_sub["is_admin_active"] = True
+            user_sub.pop("admin_login_pending", None)
             db_manager.add_bot_admin(chat_id, user_info.get("first_name", "Admin"), user_info.get("username", ""))
+            save_subscribers(subs)
             admin_menu_text = (
                 "👑 <b>XONADON+ BOSHQARUV PANELI (BOSH ADMIN)</b>\n\n"
                 "Xush kelibsiz, Administrator! Ushbu bo‘lim faqat sizga ko‘rinadi.\n"
                 "Tizimni quyidagi buyruqlar orqali boshqarishingiz mumkin:\n\n"
                 "➕ <b>/add_driver</b> — Yangi haydovchi qo‘shish (Login & Parol berish)\n"
+                "🔍 <b>/search_driver</b> — Haydovchini qidirish\n"
                 "📋 <b>/drivers</b> — Barcha faol haydovchilar ro‘yxati\n"
                 "👥 <b>/users</b> — Ro‘yxatdan o‘tgan fuqarolar statistikasi\n"
                 "🚪 <b>/exit_admin</b> — Admin rejimidan chiqish"
@@ -2992,6 +3000,49 @@ def handle_message(msg):
                 "resize_keyboard": True
             }
             send_message(chat_id, admin_menu_text, reply_markup=keyboard, parse_mode="HTML")
+            return
+        else:
+            user_sub["admin_login_pending"] = True
+            save_subscribers(subs)
+            send_message(
+                chat_id,
+                "🔐 <b>Admin sifatida kirish:</b>\nIltimos, maxsus admin parolini kiriting:",
+                parse_mode="HTML"
+            )
+            return
+
+    # Agar foydalanuvchi admin parolini kiritayotgan bo'lsa
+    if user_sub.get("admin_login_pending"):
+        if text.strip() == ADMIN_PASSWORD:
+            user_sub["is_admin_active"] = True
+            user_sub.pop("admin_login_pending", None)
+            db_manager.add_bot_admin(chat_id, user_info.get("first_name", "Admin"), user_info.get("username", ""))
+            save_subscribers(subs)
+            admin_menu_text = (
+                "👑 <b>XONADON+ BOSHQARUV PANELI (BOSH ADMIN)</b>\n\n"
+                "Xush kelibsiz, Administrator! Ushbu bo‘lim faqat sizga ko‘rinadi.\n"
+                "Tizimni quyidagi buyruqlar orqali boshqarishingiz mumkin:\n\n"
+                "➕ <b>/add_driver</b> — Yangi haydovchi qo‘shish (Login & Parol berish)\n"
+                "🔍 <b>/search_driver</b> — Haydovchini qidirish\n"
+                "📋 <b>/drivers</b> — Barcha faol haydovchilar ro‘yxati\n"
+                "👥 <b>/users</b> — Ro‘yxatdan o‘tgan fuqarolar statistikasi\n"
+                "🚪 <b>/exit_admin</b> — Admin rejimidan chiqish"
+            )
+            keyboard = {
+                "keyboard": [
+                    [{"text": "➕ Yangi haydovchi qo‘shish"}, {"text": "🔍 Haydovchini qidirish"}],
+                    [{"text": "📋 Haydovchilar ro‘yxati"}, {"text": "👥 Fuqarolar statistikasi"}],
+                    [{"text": "⬅️ Asosiy menyuga qaytish"}]
+                ],
+                "resize_keyboard": True
+            }
+            send_message(chat_id, admin_menu_text, reply_markup=keyboard, parse_mode="HTML")
+            return
+        elif text in ["/start", "⬅️ Asosiy menyuga qaytish"]:
+            user_sub.pop("admin_login_pending", None)
+            save_subscribers(subs)
+        else:
+            send_message(chat_id, "❌ <b>Noto‘g‘ri parol!</b> Iltimos, maxsus admin parolini qaytadan kiriting:", parse_mode="HTML")
             return
 
     # Helper function to send driver card with Edit and Delete inline buttons
@@ -3020,7 +3071,7 @@ def handle_message(msg):
         send_message(target_chat_id, card, reply_markup=inline_kb, parse_mode="HTML")
 
     # Admin actions
-    if db_manager.is_bot_admin(chat_id):
+    if user_sub.get("is_admin_active") or db_manager.is_bot_admin(chat_id):
         if text == "➕ Yangi haydovchi qo‘shish" or text == "/add_driver":
             user_sub["admin_state"] = "awaiting_driver_name"
             save_subscribers(subs)
@@ -3032,7 +3083,7 @@ def handle_message(msg):
             send_message(chat_id, msg_prompt, parse_mode="HTML")
             return
 
-        # 1-bosqich: Ism-familiya kiritildi -> Telefon raqam so'rash
+        # 1-bosqich: Ism-familiya kiritildi -> Tekshiruv va Telefon raqam so'rash
         elif user_sub.get("admin_state") == "awaiting_driver_name":
             # Check if user passed full line with pipes fallback
             if "|" in text:
@@ -3070,41 +3121,69 @@ def handle_message(msg):
                     return
 
             d_name = text.strip()
+            # Faqat harflar, probel va tutuq belgisi tekshiruvi (raqamlar taqiqlanadi)
+            if any(char.isdigit() for char in d_name) or len(d_name) < 3:
+                send_message(
+                    chat_id,
+                    "⚠️ <b>Iltimos, faqat harflar qatnashgan ismingizni to‘g‘ri kiriting!</b>\n<i>(Masalan: Ahror Suyunov)</i>",
+                    parse_mode="HTML"
+                )
+                return
+
             user_sub["new_d_name"] = d_name
             user_sub["admin_state"] = "awaiting_driver_phone"
             save_subscribers(subs)
             prompt = (
-                f"👤 <b>Haydovchi:</b> {d_name} ✅\n\n"
+                f"👤 <b>Haydovchi:</b> {safe_html(d_name)} ✅\n\n"
                 "2️⃣ Endi haydovchining <b>Telefon raqamini</b> kiriting:\n"
-                "<i>(Masalan: +998940401009)</i>"
+                "<i>(Masalan: +998912345678)</i>"
             )
             send_message(chat_id, prompt, parse_mode="HTML")
             return
 
-        # 2-bosqich: Telefon kiritildi -> Mashina raqamini so'rash
+        # 2-bosqich: Telefon kiritildi -> Tekshiruv va Mashina raqamini so'rash
         elif user_sub.get("admin_state") == "awaiting_driver_phone":
-            d_phone = text.strip()
+            raw_phone = text.strip().replace(" ", "")
+            # Qat'iy tekshiruv: +998 bilan boshlanishi va jami 13 ta belgi bo'lishi kerak
+            if not (raw_phone.startswith("+998") and len(raw_phone) == 13 and raw_phone[1:].isdigit()):
+                send_message(
+                    chat_id,
+                    "⚠️ <b>Iltimos, telefon raqamingizni to‘g‘ri formatda kiriting (Masalan: +998912345678)</b>",
+                    parse_mode="HTML"
+                )
+                return
+
+            d_phone = raw_phone
             user_sub["new_d_phone"] = d_phone
             user_sub["admin_state"] = "awaiting_driver_plate"
             save_subscribers(subs)
             prompt = (
                 f"📱 <b>Telefon:</b> <code>{d_phone}</code> ✅\n\n"
                 "3️⃣ Endi gaz mashinasining <b>Davlat raqamini</b> kiriting:\n"
-                "<i>(Masalan: 70 M 260 EB yoki 70M260EB)</i>"
+                "<i>(Masalan: 01A123AA yoki 01123AAA)</i>"
             )
             send_message(chat_id, prompt, parse_mode="HTML")
             return
 
-        # 3-bosqich: Mashina raqami kiritildi -> Parol so'rash
+        # 3-bosqich: Mashina raqami kiritildi -> Tekshiruv va Parol so'rash
         elif user_sub.get("admin_state") == "awaiting_driver_plate":
             raw_plate = text.strip().upper()
+            clean_plate = re.sub(r'[^A-Z0-9]', '', raw_plate)
+            if len(clean_plate) > 8 or len(clean_plate) < 4:
+                send_message(
+                    chat_id,
+                    "⚠️ <b>Iltimos, davlat raqamini to‘g‘ri kiriting (Masalan: 01A123AA yoki 01123AAA)</b>",
+                    parse_mode="HTML"
+                )
+                return
+
             user_sub["new_d_plate"] = raw_plate
             user_sub["admin_state"] = "awaiting_driver_password"
             save_subscribers(subs)
             prompt = (
                 f"🚛 <b>Mashina raqami:</b> <code>{raw_plate}</code> ✅\n\n"
                 "4️⃣ Endi haydovchining <b>Maxsus kirish parolini</b> kiriting:\n"
-                "<i>(Masalan: GENTRA yoki gaz2026)</i>"
+                "<i>(Masalan: GAZ2026 yoki gaz2026)</i>"
             )
             send_message(chat_id, prompt, parse_mode="HTML")
             return
@@ -3113,8 +3192,8 @@ def handle_message(msg):
         elif user_sub.get("admin_state") == "awaiting_driver_password":
             d_pass = text.strip()
             d_name = user_sub.get("new_d_name", "Haydovchi")
-            d_phone = user_sub.get("new_d_phone", "+998901234567")
-            d_plate = user_sub.get("new_d_plate", "30 782 AGA")
+            d_phone = user_sub.get("new_d_phone", "+998912345678")
+            d_plate = user_sub.get("new_d_plate", "70M260EB")
 
             res = db_manager.add_driver(
                 phone=d_phone,
@@ -3170,13 +3249,13 @@ def handle_message(msg):
         elif text == "🆔 ID orqali qidirish":
             user_sub["admin_state"] = "awaiting_search_driver_id"
             save_subscribers(subs)
-            send_message(chat_id, "🆔 Haydovchining <b>Maxsus ID-sini</b> kiriting:\n<i>(Masalan: HP-104928 yoki shunchaki 104928)</i>", parse_mode="HTML")
+            send_message(chat_id, "🆔 Haydovchining <b>Maxsus ID-sini</b> kiriting:\n<i>(Masalan: HP-123456 yoki shunchaki 123456)</i>", parse_mode="HTML")
             return
 
         elif text == "📱 Telefon raqam orqali qidirish":
             user_sub["admin_state"] = "awaiting_search_driver_phone"
             save_subscribers(subs)
-            send_message(chat_id, "📱 Haydovchining <b>Telefon raqamini</b> kiriting:\n<i>(Masalan: +998992213991 yoki 992213991)</i>", parse_mode="HTML")
+            send_message(chat_id, "📱 Haydovchining <b>Telefon raqamini</b> kiriting:\n<i>(Masalan: +998912345678 yoki 912345678)</i>", parse_mode="HTML")
             return
 
         elif text == "⬅️ Admin menyusiga qaytish":
@@ -3230,6 +3309,35 @@ def handle_message(msg):
                 save_subscribers(subs)
                 send_message(chat_id, "❌ Haydovchi topilmadi.")
                 return
+
+            if field == "full_name":
+                if any(char.isdigit() for char in new_val) or len(new_val) < 3:
+                    send_message(
+                        chat_id,
+                        "⚠️ <b>Iltimos, faqat harflar qatnashgan ismingizni to‘g‘ri kiriting!</b>\n<i>(Masalan: Ahror Suyunov)</i>",
+                        parse_mode="HTML"
+                    )
+                    return
+            elif field == "phone":
+                raw_p = new_val.replace(" ", "")
+                if not (raw_p.startswith("+998") and len(raw_p) == 13 and raw_p[1:].isdigit()):
+                    send_message(
+                        chat_id,
+                        "⚠️ <b>Iltimos, telefon raqamingizni to‘g‘ri formatda kiriting (Masalan: +998912345678)</b>",
+                        parse_mode="HTML"
+                    )
+                    return
+                new_val = raw_p
+            elif field == "truck_plate":
+                clean_plate = re.sub(r'[^A-Z0-9]', '', new_val.upper())
+                if len(clean_plate) > 8 or len(clean_plate) < 4:
+                    send_message(
+                        chat_id,
+                        "⚠️ <b>Iltimos, davlat raqamini to‘g‘ri kiriting (Masalan: 01A123AA yoki 01123AAA)</b>",
+                        parse_mode="HTML"
+                    )
+                    return
+                new_val = clean_plate
 
             field_labels = {
                 "full_name": "👤 I.F (Ism Familiya)",
