@@ -321,6 +321,48 @@ def get_driver_by_phone(phone):
     conn.close()
     return dict(row) if row else None
 
+def update_driver_profile(account_phone, driver_name=None, truck_plate=None, truck_model=None, truck_color=None, new_phone=None):
+    clean_p = re.sub(r'\D', '', str(account_phone or ''))
+    if len(clean_p) < 9:
+        return False
+    last9 = clean_p[-9:]
+    conn = get_connection()
+    c = conn.cursor()
+
+    # 1. Update drivers table
+    c.execute("""
+        UPDATE drivers
+        SET full_name = COALESCE(NULLIF(?, ''), full_name),
+            truck_plate = COALESCE(NULLIF(?, ''), truck_plate),
+            truck_model = COALESCE(NULLIF(?, ''), truck_model),
+            truck_color = COALESCE(NULLIF(?, ''), truck_color),
+            phone = COALESCE(NULLIF(?, ''), phone)
+        WHERE phone LIKE ?
+    """, (driver_name, truck_plate, truck_model, truck_color, new_phone, f"%{last9}%"))
+
+    # 2. Update driver_live table
+    c.execute("""
+        UPDATE driver_live
+        SET driver_name = COALESCE(NULLIF(?, ''), driver_name),
+            truck_plate = COALESCE(NULLIF(?, ''), truck_plate),
+            truck_model = COALESCE(NULLIF(?, ''), truck_model),
+            truck_color = COALESCE(NULLIF(?, ''), truck_color),
+            phone = COALESCE(NULLIF(?, ''), phone)
+        WHERE phone LIKE ?
+    """, (driver_name, truck_plate, truck_model, truck_color, new_phone, f"%{last9}%"))
+
+    # 3. Update users table
+    c.execute("""
+        UPDATE users
+        SET full_name = COALESCE(NULLIF(?, ''), full_name),
+            phone = COALESCE(NULLIF(?, ''), phone)
+        WHERE phone LIKE ?
+    """, (driver_name, new_phone, f"%{last9}%"))
+
+    conn.commit()
+    conn.close()
+    return True
+
 def get_all_drivers():
     conn = get_connection()
     c = conn.cursor()
@@ -725,8 +767,8 @@ def get_active_trucks(region=None, district=None, mfy=None):
                COALESCE(NULLIF(l.truck_plate, ''), d.truck_plate) as truck_plate, 
                COALESCE(NULLIF(l.truck_color, ''), d.truck_color) as truck_color,
                d.assigned_region, d.assigned_district, d.assigned_mfy, d.avatar_url,
-               COALESCE(l.lat, 38.665) as lat,
-               COALESCE(l.lng, 65.698) as lng,
+               l.lat,
+               l.lng,
                COALESCE(l.status, 'arrived') as status,
                COALESCE(l.stage, 'collect') as stage,
                COALESCE(l.street, 'istiqlol') as street,
@@ -748,10 +790,9 @@ def get_active_trucks(region=None, district=None, mfy=None):
     for r in rows:
         d = dict(r)
         
-        # User requirement: Tizimga qo'shilgan har bir haydovchi aholiga ko'rinaversin, umuman saralanmasin!
-        if d.get('lat') is None or d.get('lng') is None:
-            d['lat'] = 38.665
-            d['lng'] = 65.698
+        # User requirement: Agar xaritadagi ma'lumotlari aniqlanmasa, aholiga ko'rsatilmasin, standart koordinata berilmasin!
+        if d.get('lat') is None or d.get('lng') is None or d.get('lat') == 0 or d.get('lng') == 0:
+            continue
             
         pl_clean = re.sub(r'\s+', '', str(d.get("truck_plate", ""))).upper()
         if not pl_clean:

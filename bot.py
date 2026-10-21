@@ -3838,9 +3838,8 @@ class AlertApiHandler(BaseHTTPRequestHandler):
 
                     d_lat = ds.get("lat")
                     d_lng = ds.get("lng")
-                    if d_lat is None or d_lng is None:
-                        d_lat = 38.665
-                        d_lng = 65.698
+                    if d_lat is None or d_lng is None or d_lat == 0 or d_lng == 0:
+                        continue
 
                     raw_phone = str(ds.get("phone", "") or ds.get("account_phone", ""))
                     t_plate = str(ds.get("truck_plate", "")).strip()
@@ -3881,9 +3880,8 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 for dt in db_trucks:
                     dt_lat = dt.get("lat")
                     dt_lng = dt.get("lng")
-                    if dt_lat is None or dt_lng is None:
-                        dt_lat = 38.665
-                        dt_lng = 65.698
+                    if dt_lat is None or dt_lng is None or dt_lat == 0 or dt_lng == 0:
+                        continue
 
                     dt_plate = str(dt.get("truck_plate", "")).strip()
                     dt_phone = str(dt.get("phone", ""))
@@ -3926,6 +3924,46 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
                 self.wfile.write(json.dumps({"status": "error", "error": str(e), "trucks": []}).encode("utf-8"))
+                return
+
+        if self.path.startswith("/api/driver-status"):
+            try:
+                qs = urllib.parse.urlparse(self.path).query
+                params = urllib.parse.parse_qs(qs)
+                q_phone = params.get("phone", [""])[0].strip()
+                driver = None
+                if q_phone:
+                    driver = db_manager.get_driver_by_phone(q_phone)
+                if not driver:
+                    all_d = db_manager.get_all_drivers()
+                    if all_d:
+                        driver = all_d[0]
+                
+                clean_dp = re.sub(r'\D', '', str(driver.get("phone", "") if driver else ""))[-9:]
+                live_st = active_driver_states.get(clean_dp, {})
+                
+                drv_state = {
+                    "driver_name": live_st.get("driver_name") or (driver.get("full_name") if driver else "Haydovchi"),
+                    "truck_plate": live_st.get("truck_plate") or (driver.get("truck_plate") if driver else ""),
+                    "truck_model": live_st.get("truck_model") or (driver.get("truck_model") if driver else "Isuzu NPR 75"),
+                    "truck_color": live_st.get("truck_color") or (driver.get("truck_color") if driver else "Oq"),
+                    "driver_phone": live_st.get("phone") or (driver.get("phone") if driver else ""),
+                    "avatar_url": live_st.get("avatar_url") or (driver.get("avatar_url") if driver else ""),
+                    "status": live_st.get("status") or (driver.get("status", "arrived") if driver else "arrived"),
+                    "stage": live_st.get("stage") or (driver.get("stage", "collect") if driver else "collect")
+                }
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "ok", "driver_state": drv_state}).encode("utf-8"))
+                return
+            except Exception as _e:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "ok", "driver_state": {}}).encode("utf-8"))
                 return
 
         if self.path.startswith("/api/auth/2fa-status"):
@@ -4416,7 +4454,7 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 if action == "register":
                     fn = reg_data.get("first_name", "").strip()
                     ln = reg_data.get("last_name", "").strip()
-                    full_name = f"{fn} {ln}".strip() or "Ahror Suyunov"
+                    full_name = f"{fn} {ln}".strip() or "Fuqaro"
                     res = db_manager.register_user(
                         phone=f"+{raw_phone}",
                         full_name=full_name,
@@ -4458,7 +4496,7 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                     else:
                         reg_res = db_manager.register_user(
                             phone=f"+{raw_phone}",
-                            full_name="Ahror Suyunov",
+                            full_name="Fuqaro",
                             role="resident",
                             region="",
                             district="",
@@ -4466,7 +4504,7 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                             street="",
                             house_number=""
                         )
-                        user_dict = reg_res.get("user") or {"phone": f"+{raw_phone}", "full_name": "Ahror Suyunov", "role": "resident", "account_id": db_manager.generate_unique_account_id("XP-")}
+                        user_dict = reg_res.get("user") or {"phone": f"+{raw_phone}", "full_name": "Fuqaro", "role": "resident", "account_id": db_manager.generate_unique_account_id("XP-")}
 
                     if not user_dict.get("account_id"):
                         user_dict["account_id"] = db_manager.generate_unique_account_id("XP-")
@@ -4822,15 +4860,31 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 if stat in ["waiting", "idle", "paused", "stopped", "kutish"]:
                     stat = "waiting"
 
+                drv_n = data.get("driver_name")
+                t_plate = data.get("truck_plate") or data.get("plate")
+                t_model = data.get("truck_model")
+                t_color = data.get("truck_color")
+                contact_p = data.get("contact_phone") or data.get("driver_phone")
+
+                if drv_n or t_plate or t_model or t_color or contact_p:
+                    db_manager.update_driver_profile(
+                        account_phone=phone,
+                        driver_name=drv_n,
+                        truck_plate=t_plate,
+                        truck_model=t_model,
+                        truck_color=t_color,
+                        new_phone=contact_p
+                    )
+
                 if clean_p:
                     if clean_p not in active_driver_states:
                         active_driver_states[clean_p] = {
-                            "phone": phone,
+                            "phone": contact_p or phone,
                             "account_phone": phone,
-                            "driver_name": data.get("driver_name", "Haydovchi"),
-                            "truck_plate": data.get("truck_plate") or data.get("plate", ""),
-                            "truck_model": data.get("truck_model", "Isuzu NPR 75"),
-                            "truck_color": data.get("truck_color", "Oq (Sariq chiziqli)"),
+                            "driver_name": drv_n or "Haydovchi",
+                            "truck_plate": t_plate or "",
+                            "truck_model": t_model or "Isuzu NPR 75",
+                            "truck_color": t_color or "Oq (Sariq chiziqli)",
                             "status": stat,
                             "stage": stg,
                             "region": reg_k,
@@ -4847,6 +4901,12 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                     else:
                         active_driver_states[clean_p]["status"] = stat
                         active_driver_states[clean_p]["stage"] = stg
+                        if drv_n: active_driver_states[clean_p]["driver_name"] = drv_n
+                        if t_plate: active_driver_states[clean_p]["truck_plate"] = t_plate
+                        if t_model: active_driver_states[clean_p]["truck_model"] = t_model
+                        if t_color: active_driver_states[clean_p]["truck_color"] = t_color
+                        if contact_p: active_driver_states[clean_p]["phone"] = contact_p
+                        if data.get("avatar_url"): active_driver_states[clean_p]["avatar_url"] = data.get("avatar_url")
                         if stat == "waiting":
                             active_driver_states[clean_p]["lat"] = None
                             active_driver_states[clean_p]["lng"] = None
@@ -4863,6 +4923,10 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 if phone:
                     db_manager.upsert_driver_live(
                         phone=phone,
+                        driver_name=drv_n or "",
+                        truck_plate=t_plate or "",
+                        truck_model=t_model or "",
+                        truck_color=t_color or "",
                         status=stat,
                         stage=stg,
                         region=reg_k,
@@ -4870,8 +4934,9 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                         mfy=mfy_k,
                         street=st_k,
                         street_name=st_n,
-                        lat=None if stat == "waiting" else None,
-                        lng=None if stat == "waiting" else None
+                        lat=None if stat == "waiting" else data.get("lat"),
+                        lng=None if stat == "waiting" else data.get("lng"),
+                        avatar_url=data.get("avatar_url", "")
                     )
 
                 self.send_response(200)
@@ -4886,6 +4951,53 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
             return
+
+        # 5.6 DRIVER PROFILE UPDATE (F.I.Sh, Raqam, Model, Rang, Tel)
+        if self.path == "/api/driver/update-profile":
+            try:
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                body = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
+                data = json.loads(body)
+                phone = str(data.get("account_phone") or data.get("phone", "")).strip()
+                drv_n = data.get("driver_name")
+                t_plate = data.get("truck_plate") or data.get("plate")
+                t_model = data.get("truck_model")
+                t_color = data.get("truck_color")
+                contact_p = data.get("contact_phone") or data.get("driver_phone")
+                clean_p = re.sub(r'\D', '', phone)[-9:]
+
+                if phone:
+                    db_manager.update_driver_profile(
+                        account_phone=phone,
+                        driver_name=drv_n,
+                        truck_plate=t_plate,
+                        truck_model=t_model,
+                        truck_color=t_color,
+                        new_phone=contact_p
+                    )
+
+                if clean_p and clean_p in active_driver_states:
+                    if drv_n: active_driver_states[clean_p]["driver_name"] = drv_n
+                    if t_plate: active_driver_states[clean_p]["truck_plate"] = t_plate
+                    if t_model: active_driver_states[clean_p]["truck_model"] = t_model
+                    if t_color: active_driver_states[clean_p]["truck_color"] = t_color
+                    if contact_p: active_driver_states[clean_p]["phone"] = contact_p
+                    if data.get("avatar_url"): active_driver_states[clean_p]["avatar_url"] = data.get("avatar_url")
+                    active_driver_states[clean_p]["updated_at"] = time.time()
+
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": True, "message": "Haydovchi ma'lumotlari muvaffaqiyatli yangilandi"}).encode("utf-8"))
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
+            return
+
 
         # 6. DRIVER LIVE LOCATION & TELEMETRY UPDATE (GPS & Multi-driver state)
         if self.path == "/api/driver/location" or self.path == "/api/driver/telemetry":
