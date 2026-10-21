@@ -2550,6 +2550,18 @@ def get_otp_keyboard():
         "resize_keyboard": True
     }
 
+
+def get_admin_reply_keyboard():
+    return {
+        "keyboard": [
+            [{"text": "🔍 Haydovchini qidirish"}, {"text": "🔍 Aholini qidirish"}],
+            [{"text": "➕ Yangi haydovchi qo‘shish"}, {"text": "👥 Aholi ro‘yxati (Excel)"}],
+            [{"text": "📋 Haydovchilar ro‘yxati"}, {"text": "👥 Fuqarolar statistikasi"}],
+            [{"text": "⬅️ Asosiy menyuga qaytish"}]
+        ],
+        "resize_keyboard": True
+    }
+
 def get_main_keyboard(chat_id=None):
     addr_btn_text = "📍 Manzilimni biriktirish"
     if chat_id is not None:
@@ -3125,15 +3137,7 @@ def handle_message(msg):
                     [{"text": "🚪 Admin rejimidan chiqish", "callback_data": "admin_exit"}]
                 ]
             }
-            keyboard = {
-                "keyboard": [
-                    [{"text": "🔍 Haydovchini qidirish"}, {"text": "🔍 Aholini qidirish"}],
-                    [{"text": "➕ Yangi haydovchi qo‘shish"}, {"text": "👥 Aholi ro‘yxati (Excel)"}],
-                    [{"text": "📋 Haydovchilar ro‘yxati"}, {"text": "👥 Fuqarolar statistikasi"}],
-                    [{"text": "⬅️ Asosiy menyuga qaytish"}]
-                ],
-                "resize_keyboard": True
-            }
+            send_message(chat_id, "👑 <b>Admin boshqaruv paneli faollashtirildi!</b>", reply_markup=get_admin_reply_keyboard(), parse_mode="HTML")
             send_message(chat_id, admin_menu_text, reply_markup=inline_admin_kb, parse_mode="HTML")
             return
         else:
@@ -3158,19 +3162,23 @@ def handle_message(msg):
                 "Xush kelibsiz, Administrator! Ushbu bo‘lim faqat sizga ko‘rinadi.\n"
                 "Tizimni boshqarish uchun pastdagi tugmalardan foydalanishingiz mumkin:\n\n"
                 "🔍 <b>/search_driver</b> — Haydovchini qidirish\n"
-                "➕ <b>/add_driver</b> — Yangi haydovchi qo‘shish (Login & Parol berish)\n"
-                "📋 <b>/drivers</b> — Barcha faol haydovchilar ro‘yxati\n"
-                "👥 <b>/users</b> — Ro‘yxatdan o‘tgan fuqarolar statistikasi\n"
+                "🔍 <b>/search_user</b> — Aholini qidirish\n"
+                "➕ <b>/add_driver</b> — Yangi haydovchi qo‘shish\n"
+                "📋 <b>/drivers</b> — Barcha haydovchilar ro‘yxati\n"
+                "👥 <b>/users_excel</b> — Aholi ro‘yxati (Excel yuklab olish)\n"
+                "📊 <b>/users</b> — Fuqarolar statistikasi\n"
                 "🚪 <b>/exit_admin</b> — Admin rejimidan chiqish"
             )
             inline_admin_kb = {
                 "inline_keyboard": [
-                    [{"text": "🔍 Haydovchini qidirish", "callback_data": "admin_search_driver"}],
+                    [{"text": "🔍 Haydovchini qidirish", "callback_data": "admin_search_driver"}, {"text": "🔍 Aholini qidirish", "callback_data": "admin_search_user"}],
                     [{"text": "➕ Yangi haydovchi qo‘shish", "callback_data": "admin_add_driver"}],
-                    [{"text": "📋 Haydovchilar ro‘yxati", "callback_data": "admin_list_drivers"}, {"text": "👥 Fuqarolar statistikasi", "callback_data": "admin_users_stat"}],
+                    [{"text": "📋 Haydovchilar ro‘yxati", "callback_data": "admin_list_drivers"}, {"text": "👥 Aholi ro‘yxati (Excel)", "callback_data": "admin_users_excel"}],
+                    [{"text": "📊 Fuqarolar statistikasi", "callback_data": "admin_users_stat"}],
                     [{"text": "🚪 Admin rejimidan chiqish", "callback_data": "admin_exit"}]
                 ]
             }
+            send_message(chat_id, "👑 <b>Admin boshqaruv paneli faollashtirildi!</b>", reply_markup=get_admin_reply_keyboard(), parse_mode="HTML")
             send_message(chat_id, admin_menu_text, reply_markup=inline_admin_kb, parse_mode="HTML")
             return
         elif text in ["/start", "⬅️ Asosiy menyuga qaytish"]:
