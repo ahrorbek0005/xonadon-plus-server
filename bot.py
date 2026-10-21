@@ -2985,7 +2985,7 @@ def handle_message(msg):
             )
             keyboard = {
                 "keyboard": [
-                    [{"text": "➕ Yangi haydovchi qo‘shish"}],
+                    [{"text": "➕ Yangi haydovchi qo‘shish"}, {"text": "🔍 Haydovchini qidirish"}],
                     [{"text": "📋 Haydovchilar ro‘yxati"}, {"text": "👥 Fuqarolar statistikasi"}],
                     [{"text": "⬅️ Asosiy menyuga qaytish"}]
                 ],
@@ -2993,6 +2993,31 @@ def handle_message(msg):
             }
             send_message(chat_id, admin_menu_text, reply_markup=keyboard, parse_mode="HTML")
             return
+
+    # Helper function to send driver card with Edit and Delete inline buttons
+    def send_driver_card(target_chat_id, d):
+        d_name = d.get('full_name', '')
+        d_id = d.get('account_id') or 'HP-100000'
+        d_phone = d.get('phone', '')
+        d_plate = d.get('truck_plate', '')
+        d_pass = d.get('password', '')
+
+        card = (
+            f"👤 <b>I.F:</b> {safe_html(d_name)}\n"
+            f"🆔 <b>Maxsus ID:</b> <code>{safe_html(d_id)}</code>\n"
+            f"📱 <b>Telefon (Login):</b> <code>{safe_html(d_phone)}</code>\n"
+            f"🚛 <b>Mashina raqami:</b> <code>{safe_html(d_plate)}</code>\n"
+            f"🔑 <b>Kirish paroli:</b> <code>{safe_html(d_pass)}</code>"
+        )
+        inline_kb = {
+            "inline_keyboard": [
+                [
+                    {"text": "✏️ Tahrirlash", "callback_data": f"edtdrv_{d_phone}"},
+                    {"text": "❌ O‘chirish", "callback_data": f"deldriver_{d_phone}"}
+                ]
+            ]
+        }
+        send_message(target_chat_id, card, reply_markup=inline_kb, parse_mode="HTML")
 
     # Admin actions
     if db_manager.is_bot_admin(chat_id):
@@ -3017,7 +3042,11 @@ def handle_message(msg):
                     d_phone = parts[1]
                     d_plate = parts[2]
                     d_pass = parts[3] if len(parts) > 3 else "gaz2026"
-                    db_manager.add_driver(phone=d_phone, full_name=d_name, truck_plate=d_plate, password=d_pass, assigned_mfy="koksoy")
+                    res = db_manager.add_driver(phone=d_phone, full_name=d_name, truck_plate=d_plate, password=d_pass, assigned_mfy="koksoy")
+                    d_id = res.get("account_id") if isinstance(res, dict) else ""
+                    if not d_id:
+                        d_obj = db_manager.get_driver_by_phone(d_phone)
+                        d_id = d_obj.get("account_id", "") if d_obj else ""
                     # Clear in-memory active_driver_states so new driver starts strictly in WAITING mode
                     clean_p = re.sub(r'\D', '', d_phone)[-9:]
                     active_driver_states.pop(clean_p, None)
@@ -3026,7 +3055,18 @@ def handle_message(msg):
                             active_driver_states.pop(k, None)
                     user_sub.pop("admin_state", None)
                     save_subscribers(subs)
-                    send_message(chat_id, f"✅ <b>HAYDOVCHI QO‘SHILDI!</b>\n👤 {d_name}\n📱 {d_phone}\n🚛 {d_plate}\n🔑 {d_pass}", parse_mode="HTML")
+                    send_message(
+                        chat_id,
+                        f"✅ <b>HAYDOVCHI MUVAFFAQIYATLI QO‘SHILDI!</b>\n\n"
+                        f"👤 <b>I.F:</b> {safe_html(d_name)}\n"
+                        f"🆔 <b>Maxsus ID:</b> <code>{safe_html(d_id)}</code>\n"
+                        f"📱 <b>Login (Telefon):</b> <code>{safe_html(d_phone)}</code>\n"
+                        f"🚛 <b>Mashina raqami:</b> <code>{safe_html(d_plate)}</code>\n"
+                        f"📍 <b>Hudud:</b> «Ko‘ksoy» MFY, Nishon tumani\n"
+                        f"🔑 <b>Kirish paroli:</b> <code>{safe_html(d_pass)}</code>\n\n"
+                        "Endi haydovchi ilovaga ushbu telefon, mashina raqami va parol orqali kira oladi!",
+                        parse_mode="HTML"
+                    )
                     return
 
             d_name = text.strip()
@@ -3083,6 +3123,11 @@ def handle_message(msg):
                 password=d_pass,
                 assigned_mfy="koksoy"
             )
+            d_id = res.get("account_id") if isinstance(res, dict) else ""
+            if not d_id:
+                d_obj = db_manager.get_driver_by_phone(d_phone)
+                d_id = d_obj.get("account_id", "") if d_obj else ""
+
             # Clear in-memory active_driver_states so new driver starts strictly in WAITING mode
             clean_p = re.sub(r'\D', '', d_phone)[-9:]
             active_driver_states.pop(clean_p, None)
@@ -3098,14 +3143,129 @@ def handle_message(msg):
 
             succ_text = (
                 "✅ <b>HAYDOVCHI MUVAFFAQIYATLI QO‘SHILDI!</b>\n\n"
-                f"👤 <b>F.I.Sh:</b> {d_name}\n"
-                f"📱 <b>Login (Telefon):</b> <code>{d_phone}</code>\n"
-                f"🚛 <b>Mashina raqami:</b> <code>{d_plate}</code>\n"
+                f"👤 <b>I.F:</b> {safe_html(d_name)}\n"
+                f"🆔 <b>Maxsus ID:</b> <code>{safe_html(d_id)}</code>\n"
+                f"📱 <b>Login (Telefon):</b> <code>{safe_html(d_phone)}</code>\n"
+                f"🚛 <b>Mashina raqami:</b> <code>{safe_html(d_plate)}</code>\n"
                 f"📍 <b>Hudud:</b> «Ko‘ksoy» MFY, Nishon tumani\n"
-                f"🔑 <b>Kirish paroli:</b> <code>{d_pass}</code>\n\n"
+                f"🔑 <b>Kirish paroli:</b> <code>{safe_html(d_pass)}</code>\n\n"
                 "Endi haydovchi ilovaga ushbu telefon, mashina raqami va parol orqali kira oladi!"
             )
             send_message(chat_id, succ_text, parse_mode="HTML")
+            return
+
+        elif text == "🔍 Haydovchini qidirish" or text == "/search_driver":
+            user_sub.pop("admin_state", None)
+            save_subscribers(subs)
+            search_kb = {
+                "keyboard": [
+                    [{"text": "🆔 ID orqali qidirish"}, {"text": "📱 Telefon raqam orqali qidirish"}],
+                    [{"text": "⬅️ Admin menyusiga qaytish"}]
+                ],
+                "resize_keyboard": True
+            }
+            send_message(chat_id, "🔍 <b>HAYDOVCHINI QIDIRISH:</b>\n\nQidirish usulini tanlang 👇", reply_markup=search_kb, parse_mode="HTML")
+            return
+
+        elif text == "🆔 ID orqali qidirish":
+            user_sub["admin_state"] = "awaiting_search_driver_id"
+            save_subscribers(subs)
+            send_message(chat_id, "🆔 Haydovchining <b>Maxsus ID-sini</b> kiriting:\n<i>(Masalan: HP-104928 yoki shunchaki 104928)</i>", parse_mode="HTML")
+            return
+
+        elif text == "📱 Telefon raqam orqali qidirish":
+            user_sub["admin_state"] = "awaiting_search_driver_phone"
+            save_subscribers(subs)
+            send_message(chat_id, "📱 Haydovchining <b>Telefon raqamini</b> kiriting:\n<i>(Masalan: +998992213991 yoki 992213991)</i>", parse_mode="HTML")
+            return
+
+        elif text == "⬅️ Admin menyusiga qaytish":
+            user_sub.pop("admin_state", None)
+            save_subscribers(subs)
+            admin_kb = {
+                "keyboard": [
+                    [{"text": "➕ Yangi haydovchi qo‘shish"}, {"text": "🔍 Haydovchini qidirish"}],
+                    [{"text": "📋 Haydovchilar ro‘yxati"}, {"text": "👥 Fuqarolar statistikasi"}],
+                    [{"text": "⬅️ Asosiy menyuga qaytish"}]
+                ],
+                "resize_keyboard": True
+            }
+            send_message(chat_id, "👑 <b>Admin boshqaruv paneli:</b>", reply_markup=admin_kb, parse_mode="HTML")
+            return
+
+        elif user_sub.get("admin_state") == "awaiting_search_driver_id":
+            user_sub.pop("admin_state", None)
+            save_subscribers(subs)
+            s_query = text.strip()
+            drv = db_manager.get_driver_by_account_id(s_query)
+            if not drv:
+                send_message(chat_id, f"❌ <b>«{safe_html(s_query)}»</b> ID bo‘yicha hech qanday haydovchi topilmadi.", parse_mode="HTML")
+            else:
+                send_message(chat_id, "🔍 <b>QIDIRUV NATIJASI:</b>", parse_mode="HTML")
+                send_driver_card(chat_id, drv)
+            return
+
+        elif user_sub.get("admin_state") == "awaiting_search_driver_phone":
+            user_sub.pop("admin_state", None)
+            save_subscribers(subs)
+            s_query = text.strip()
+            drv = db_manager.get_driver_by_phone(s_query)
+            if not drv:
+                send_message(chat_id, f"❌ <b>«{safe_html(s_query)}»</b> telefon raqamli haydovchi topilmadi.", parse_mode="HTML")
+            else:
+                send_message(chat_id, "🔍 <b>QIDIRUV NATIJASI:</b>", parse_mode="HTML")
+                send_driver_card(chat_id, drv)
+            return
+
+        elif user_sub.get("admin_state") == "awaiting_edit_value":
+            p_target = user_sub.get("pending_edit_target", {})
+            target_phone = p_target.get("phone")
+            field = p_target.get("field")
+            new_val = text.strip()
+
+            drv = db_manager.get_driver_by_phone(target_phone)
+            if not drv:
+                user_sub.pop("admin_state", None)
+                user_sub.pop("pending_edit_target", None)
+                save_subscribers(subs)
+                send_message(chat_id, "❌ Haydovchi topilmadi.")
+                return
+
+            field_labels = {
+                "full_name": "👤 I.F (Ism Familiya)",
+                "phone": "📱 Telefon raqami (Login)",
+                "truck_plate": "🚛 Mashina raqami",
+                "password": "🔑 Kirish paroli"
+            }
+            label = field_labels.get(field, field)
+            old_val = str(drv.get(field, "") or "")
+
+            user_sub["pending_confirmation"] = {
+                "phone": target_phone,
+                "field": field,
+                "new_val": new_val,
+                "old_val": old_val
+            }
+            user_sub.pop("admin_state", None)
+            save_subscribers(subs)
+
+            confirm_msg = (
+                "⚠️ <b>MA’LUMOTNI O‘ZGARTIRISHNI TASDIQLANG:</b>\n\n"
+                f"👤 <b>Haydovchi:</b> {safe_html(drv.get('full_name', ''))}\n"
+                f"📌 <b>O‘zgaruvchi maydon:</b> {label}\n"
+                f"➖ <b>Eski qiymat:</b> <code>{safe_html(old_val)}</code>\n"
+                f"➕ <b>Yangi qiymat:</b> <code>{safe_html(new_val)}</code>\n\n"
+                "Haqiqatan ham ushbu ma’lumotni o‘zgartirmoqchimisiz?"
+            )
+            confirm_kb = {
+                "inline_keyboard": [
+                    [
+                        {"text": "✅ Ha, saqlansin", "callback_data": "conf_edit_yes"},
+                        {"text": "❌ Yo‘q, bekor qilish", "callback_data": "conf_edit_no"}
+                    ]
+                ]
+            }
+            send_message(chat_id, confirm_msg, reply_markup=confirm_kb, parse_mode="HTML")
             return
 
         elif text == "📋 Haydovchilar ro‘yxati" or text == "/drivers":
@@ -3113,25 +3273,9 @@ def handle_message(msg):
             if not drivers:
                 send_message(chat_id, "Hozircha tizimda haydovchilar yo‘q.")
                 return
-            send_message(chat_id, "📋 <b>TIZIMDAGI HAYDOVCHILAR:</b>\n<i>O‘chirish uchun kerakli haydovchi ostidagi tugmani bosing:</i>", parse_mode="HTML")
+            send_message(chat_id, f"📋 <b>TIZIMDAGI HAYDOVCHILAR (Jami: {len(drivers)} ta):</b>\n<i>Tahrirlash yoki o‘chirish uchun kerakli tugmani bosing:</i>", parse_mode="HTML")
             for d in drivers:
-                d_phone = d.get('phone', '')
-                d_name = d.get('full_name', '')
-                d_plate = d.get('truck_plate', '')
-                d_model = d.get('truck_model', 'Isuzu NPR 75')
-                d_pass = d.get('password', '')
-
-                d_item = (
-                    f"• <b>{safe_html(d_name)}</b>\n"
-                    f"  📱 Tel/Login: <code>{safe_html(d_phone)}</code> | Parol: <code>{safe_html(d_pass)}</code>\n"
-                    f"  🚛 Mashina: <b>{safe_html(d_plate)}</b> ({safe_html(d_model)})"
-                )
-                inline_del = {
-                    "inline_keyboard": [
-                        [{"text": f"❌ {safe_html(d_name)} ({d_plate}) ni o‘chirish", "callback_data": f"deldriver_{d_phone}"}]
-                    ]
-                }
-                send_message(chat_id, d_item, reply_markup=inline_del, parse_mode="HTML")
+                send_driver_card(chat_id, d)
             return
 
         elif text == "👥 Fuqarolar statistikasi" or text == "/users":
@@ -3404,19 +3548,164 @@ def handle_callback(cb):
 
     answer_callback(cb_id)
 
+    # --- HAYDOVCHI TAHRIRLASH CALLBACKLARI ---
+    if data.startswith("edtdrv_"):
+        phone_to_edit = data.split("edtdrv_")[1].strip()
+        drv = db_manager.get_driver_by_phone(phone_to_edit)
+        if not drv:
+            send_message(chat_id, "❌ Haydovchi topilmadi.")
+            return
+        d_name = drv.get("full_name", "")
+        d_id = drv.get("account_id") or "HP-100000"
+        d_phone = drv.get("phone", "")
+        d_plate = drv.get("truck_plate", "")
+
+        edit_menu_text = (
+            f"✏️ <b>HAYDOVCHI MA’LUMOTLARINI TAHRIRLASH:</b>\n\n"
+            f"👤 <b>I.F:</b> {safe_html(d_name)}\n"
+            f"🆔 <b>Maxsus ID:</b> <code>{safe_html(d_id)}</code>\n"
+            f"📱 <b>Telefon:</b> <code>{safe_html(d_phone)}</code>\n"
+            f"🚛 <b>Mashina raqami:</b> <code>{safe_html(d_plate)}</code>\n\n"
+            "Qaysi ma’lumotni o‘zgartirmoqchisiz? Tanlang 👇"
+        )
+        fields_kb = {
+            "inline_keyboard": [
+                [{"text": "👤 I.F (Ism Familiya)", "callback_data": f"chfield_{phone_to_edit}_full_name"}],
+                [{"text": "📱 Telefon raqami", "callback_data": f"chfield_{phone_to_edit}_phone"}],
+                [{"text": "🚛 Mashina raqami", "callback_data": f"chfield_{phone_to_edit}_truck_plate"}],
+                [{"text": "🔑 Kirish paroli", "callback_data": f"chfield_{phone_to_edit}_password"}],
+                [{"text": "⬅️ Bekor qilish", "callback_data": "cancel_edit"}]
+            ]
+        }
+        send_message(chat_id, edit_menu_text, reply_markup=fields_kb, parse_mode="HTML")
+        return
+
+    if data.startswith("chfield_"):
+        parts = data.split("_")
+        field = parts[-1]
+        if field in ["name", "plate"]:
+            field = parts[-2] + "_" + parts[-1]
+            phone_target = "_".join(parts[1:-2])
+        else:
+            phone_target = "_".join(parts[1:-1])
+
+        subs = load_subscribers()
+        cid_str = str(chat_id)
+        u_sub = subs.setdefault(cid_str, {})
+        u_sub["admin_state"] = "awaiting_edit_value"
+        u_sub["pending_edit_target"] = {"phone": phone_target, "field": field}
+        save_subscribers(subs)
+
+        prompts = {
+            "full_name": "👤 Yangi <b>Ism va Familiyani</b> kiriting:\n<i>(Masalan: Ahror Suyunov)</i>",
+            "phone": "📱 Yangi <b>Telefon raqamini</b> kiriting:\n<i>(Masalan: +998992213991)</i>",
+            "truck_plate": "🚛 Mashinaning yangi <b>Davlat raqamini</b> kiriting:\n<i>(Masalan: 70M260EB)</i>",
+            "password": "🔑 Yangi <b>Kirish parolini</b> kiriting:\n<i>(Masalan: ahror2005)</i>"
+        }
+        send_message(chat_id, prompts.get(field, "Yangi qiymatni kiriting:"), parse_mode="HTML")
+        return
+
+    if data == "conf_edit_yes":
+        subs = load_subscribers()
+        cid_str = str(chat_id)
+        u_sub = subs.setdefault(cid_str, {})
+        p_conf = u_sub.pop("pending_confirmation", None)
+        u_sub.pop("admin_state", None)
+        u_sub.pop("pending_edit_target", None)
+        save_subscribers(subs)
+
+        if not p_conf:
+            send_message(chat_id, "⚠️ O‘zgartirish muddati o‘tgan yoki topilmadi.")
+            return
+
+        phone = p_conf.get("phone")
+        field = p_conf.get("field")
+        new_val = p_conf.get("new_val")
+
+        res = db_manager.update_driver_admin_credentials(phone, field, new_val)
+        if res.get("ok"):
+            updated_drv = res.get("driver") or db_manager.get_driver_by_phone(new_val if field == "phone" else phone)
+            edit_message_text(
+                chat_id, msg_id,
+                "✅ <b>Ma’lumot muvaffaqiyatli saqlandi va yangilandi!</b>",
+                parse_mode="HTML"
+            )
+            if updated_drv:
+                send_message(chat_id, "📋 <b>YANGILANGAN HAYDOVCHI MA’LUMOTI:</b>", parse_mode="HTML")
+                d_name = updated_drv.get('full_name', '')
+                d_id = updated_drv.get('account_id') or 'HP-100000'
+                d_phone = updated_drv.get('phone', '')
+                d_plate = updated_drv.get('truck_plate', '')
+                d_pass = updated_drv.get('password', '')
+
+                card = (
+                    f"👤 <b>I.F:</b> {safe_html(d_name)}\n"
+                    f"🆔 <b>Maxsus ID:</b> <code>{safe_html(d_id)}</code>\n"
+                    f"📱 <b>Telefon (Login):</b> <code>{safe_html(d_phone)}</code>\n"
+                    f"🚛 <b>Mashina raqami:</b> <code>{safe_html(d_plate)}</code>\n"
+                    f"🔑 <b>Kirish paroli:</b> <code>{safe_html(d_pass)}</code>"
+                )
+                inline_kb = {
+                    "inline_keyboard": [
+                        [
+                            {"text": "✏️ Tahrirlash", "callback_data": f"edtdrv_{d_phone}"},
+                            {"text": "❌ O‘chirish", "callback_data": f"deldriver_{d_phone}"}
+                        ]
+                    ]
+                }
+                send_message(chat_id, card, reply_markup=inline_kb, parse_mode="HTML")
+        else:
+            edit_message_text(
+                chat_id, msg_id,
+                f"❌ <b>Xatolik yuz berdi:</b> {res.get('message', 'Nomaʼlum xato')}",
+                parse_mode="HTML"
+            )
+        return
+
+    if data == "conf_edit_no":
+        subs = load_subscribers()
+        cid_str = str(chat_id)
+        u_sub = subs.setdefault(cid_str, {})
+        u_sub.pop("pending_confirmation", None)
+        u_sub.pop("admin_state", None)
+        u_sub.pop("pending_edit_target", None)
+        save_subscribers(subs)
+        edit_message_text(
+            chat_id, msg_id,
+            "❌ <b>Tahrirlash bekor qilindi. Eski ma’lumotlar saqlab qolindi.</b>",
+            parse_mode="HTML"
+        )
+        return
+
+    if data == "cancel_edit":
+        edit_message_text(
+            chat_id, msg_id,
+            "❌ <b>Tahrirlash bekor qilindi.</b>",
+            parse_mode="HTML"
+        )
+        return
+
     # --- HAYDOVCHINI O'CHIRISH CALLBACKLARI ---
     if data.startswith("deldriver_"):
         phone_to_del = data.split("deldriver_")[1].strip()
+        drv = db_manager.get_driver_by_phone(phone_to_del)
+        d_name = drv.get("full_name", "") if drv else "Haydovchi"
+        d_id = drv.get("account_id", "") if drv else ""
+        d_plate = drv.get("truck_plate", "") if drv else ""
+
         confirm_text = (
             f"⚠️ <b>HAYDOVCHINI O‘CHIRISHNI TASDIQLANG:</b>\n\n"
-            f"📱 <b>Telefon/Login:</b> <code>{safe_html(phone_to_del)}</code>\n\n"
+            f"👤 <b>I.F:</b> {safe_html(d_name)}\n"
+            f"🆔 <b>Maxsus ID:</b> <code>{safe_html(d_id)}</code>\n"
+            f"📱 <b>Telefon:</b> <code>{safe_html(phone_to_del)}</code>\n"
+            f"🚛 <b>Mashina raqami:</b> <code>{safe_html(d_plate)}</code>\n\n"
             f"Haqiqatan ham ushbu haydovchini tizimdan butunlay o‘chirib tashlamoqchimisiz?\n"
             f"<i>(O‘chirilgach, ushbu haydovchi qaytib ilovaga kira olmaydi)</i>"
         )
         inline_confirm = {
             "inline_keyboard": [
-                [{"text": "🗑 Ha, butunlay o‘chirish", "callback_data": f"confdel_{phone_to_del}"}],
-                [{"text": "❌ Bekor qilish", "callback_data": "cancel_del"}]
+                [{"text": "🗑 Ha, butunlay o‘chirilsin", "callback_data": f"confdel_{phone_to_del}"}],
+                [{"text": "❌ Yo‘q, bekor qilish", "callback_data": "cancel_del"}]
             ]
         }
         send_message(chat_id, confirm_text, reply_markup=inline_confirm, parse_mode="HTML")
@@ -3424,6 +3713,8 @@ def handle_callback(cb):
 
     if data.startswith("confdel_"):
         phone_to_del = data.split("confdel_")[1].strip()
+        drv = db_manager.get_driver_by_phone(phone_to_del)
+        d_name = drv.get("full_name", "Haydovchi") if drv else "Haydovchi"
         db_manager.delete_driver(phone_to_del)
         clean_del = re.sub(r'\D', '', str(phone_to_del))
         clean_del_last9 = clean_del[-9:] if len(clean_del) >= 9 else clean_del
@@ -3442,58 +3733,7 @@ def handle_callback(cb):
             current_driver_state['driver_name'] = ''
         edit_message_text(
             chat_id, msg_id,
-            f"✅ <b>Haydovchi ({safe_html(phone_to_del)}) tizimdan butunlay o‘chirildi!</b>\nUning hisobi va kirish ruxsatnomasi bekor qilindi.",
-            parse_mode="HTML"
-        )
-        return
-
-    if data == "cancel_del":
-        edit_message_text(
-            chat_id, msg_id,
-            "❌ <b>Haydovchini o‘chirish bekor qilindi.</b>",
-            parse_mode="HTML"
-        )
-        return
-
-    # --- HAYDOVCHINI O'CHIRISH CALLBACKLARI ---
-    if data.startswith("deldriver_"):
-        phone_to_del = data.split("deldriver_")[1].strip()
-        confirm_text = (
-            f"⚠️ <b>HAYDOVCHINI O‘CHIRISHNI TASDIQLANG:</b>\n\n"
-            f"📱 <b>Telefon/Login:</b> <code>{safe_html(phone_to_del)}</code>\n\n"
-            f"Haqiqatan ham ushbu haydovchini tizimdan butunlay o‘chirib tashlamoqchimisiz?\n"
-            f"<i>(O‘chirilgach, ushbu haydovchi qaytib ilovaga kira olmaydi)</i>"
-        )
-        inline_confirm = {
-            "inline_keyboard": [
-                [{"text": "🗑 Ha, butunlay o‘chirish", "callback_data": f"confdel_{phone_to_del}"}],
-                [{"text": "❌ Bekor qilish", "callback_data": "cancel_del"}]
-            ]
-        }
-        send_message(chat_id, confirm_text, reply_markup=inline_confirm, parse_mode="HTML")
-        return
-
-    if data.startswith("confdel_"):
-        phone_to_del = data.split("confdel_")[1].strip()
-        db_manager.delete_driver(phone_to_del)
-        clean_del = re.sub(r'\D', '', str(phone_to_del))
-        clean_del_last9 = clean_del[-9:] if len(clean_del) >= 9 else clean_del
-
-        # Purge deleted driver from memory registry
-        for k in list(active_driver_states.keys()):
-            clean_k = re.sub(r'\D', '', str(k))
-            if clean_del and (clean_del == clean_k or clean_del_last9 in clean_k or clean_k in clean_del):
-                active_driver_states.pop(k, None)
-
-        clean_cur = re.sub(r'\D', '', str(current_driver_state.get('driver_phone', '')))
-        if clean_del and clean_cur and clean_del[-9:] == clean_cur[-9:]:
-            current_driver_state['status'] = 'waiting'
-            current_driver_state['is_active'] = 0
-            current_driver_state['truck_plate'] = ''
-            current_driver_state['driver_name'] = ''
-        edit_message_text(
-            chat_id, msg_id,
-            f"✅ <b>Haydovchi ({safe_html(phone_to_del)}) tizimdan butunlay o‘chirildi!</b>\nUning hisobi va kirish ruxsatnomasi bekor qilindi.",
+            f"✅ <b>Haydovchi ({safe_html(d_name)} - {safe_html(phone_to_del)}) tizimdan butunlay o‘chirildi!</b>\nUning hisobi va kirish ruxsatnomasi bekor qilindi.",
             parse_mode="HTML"
         )
         return

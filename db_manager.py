@@ -286,7 +286,7 @@ def add_driver(phone, full_name, truck_plate, password='gaz2026', truck_model='I
 
     c.execute("SELECT account_id FROM drivers WHERE phone = ?", (clean_p,))
     row = c.fetchone()
-    account_id = row["account_id"] if row and row["account_id"] else generate_unique_account_id("XP-")
+    account_id = row["account_id"] if row and row["account_id"] else generate_unique_account_id("HP-")
 
     c.execute("""
     INSERT OR REPLACE INTO drivers (phone, full_name, truck_model, truck_plate, truck_color, assigned_region, assigned_district, assigned_mfy, password, account_id, is_active)
@@ -321,6 +321,63 @@ def get_driver_by_phone(phone):
     conn.close()
     return dict(row) if row else None
 
+def get_driver_by_account_id(account_id):
+    if not account_id:
+        return None
+    conn = get_connection()
+    c = conn.cursor()
+    clean_id = str(account_id).strip().upper()
+    c.execute("SELECT * FROM drivers WHERE (UPPER(account_id) = ? OR UPPER(account_id) = ?) AND is_active = 1", 
+              (clean_id, f"HP-{clean_id}"))
+    row = c.fetchone()
+    if not row:
+        digits = re.sub(r'\D', '', clean_id)
+        if digits and len(digits) >= 4:
+            c.execute("SELECT * FROM drivers WHERE account_id LIKE ? AND is_active = 1", (f"%{digits}%",))
+            row = c.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def update_driver_admin_credentials(phone, field, new_value):
+    conn = get_connection()
+    c = conn.cursor()
+    raw = str(phone or '').strip()
+    digits = re.sub(r'\D', '', raw)
+    last9 = digits[-9:] if len(digits) >= 9 else digits
+
+    c.execute("SELECT * FROM drivers WHERE phone = ? OR phone LIKE ? OR phone LIKE ?", (raw, f"%{last9}%", f"%{digits}%"))
+    drv = c.fetchone()
+    if not drv:
+        conn.close()
+        return {"ok": False, "message": "Haydovchi topilmadi"}
+
+    old_phone = drv["phone"]
+    clean_old_last9 = re.sub(r'\D', '', old_phone)[-9:]
+
+    if field == "full_name":
+        c.execute("UPDATE drivers SET full_name = ? WHERE phone = ?", (new_value.strip(), old_phone))
+        c.execute("UPDATE users SET full_name = ? WHERE phone LIKE ?", (new_value.strip(), f"%{clean_old_last9}%"))
+        c.execute("UPDATE driver_live SET driver_name = ? WHERE phone LIKE ?", (new_value.strip(), f"%{clean_old_last9}%"))
+    elif field == "phone":
+        new_phone = new_value.strip()
+        c.execute("UPDATE drivers SET phone = ? WHERE phone = ?", (new_phone, old_phone))
+        c.execute("UPDATE users SET phone = ? WHERE phone LIKE ?", (new_phone, f"%{clean_old_last9}%"))
+        c.execute("UPDATE driver_live SET phone = ? WHERE phone LIKE ?", (new_phone, f"%{clean_old_last9}%"))
+        c.execute("UPDATE sessions SET phone = ? WHERE phone LIKE ?", (new_phone, f"%{clean_old_last9}%"))
+    elif field == "truck_plate":
+        new_plate = new_value.strip().upper()
+        c.execute("UPDATE drivers SET truck_plate = ? WHERE phone = ?", (new_plate, old_phone))
+        c.execute("UPDATE driver_live SET truck_plate = ? WHERE phone LIKE ?", (new_plate, f"%{clean_old_last9}%"))
+    elif field == "password":
+        c.execute("UPDATE drivers SET password = ? WHERE phone = ?", (new_value.strip(), old_phone))
+
+    conn.commit()
+    target_phone = new_value.strip() if field == 'phone' else old_phone
+    c.execute("SELECT * FROM drivers WHERE phone = ?", (target_phone,))
+    updated = c.fetchone()
+    conn.close()
+    return {"ok": True, "driver": dict(updated) if updated else None}
+
 def update_driver_profile(account_phone, driver_name=None, truck_plate=None, truck_model=None, truck_color=None, new_phone=None):
     clean_p = re.sub(r'\D', '', str(account_phone or ''))
     if len(clean_p) < 9:
@@ -329,18 +386,8 @@ def update_driver_profile(account_phone, driver_name=None, truck_plate=None, tru
     conn = get_connection()
     c = conn.cursor()
 
-    # 1. Update drivers table
-    c.execute("""
-        UPDATE drivers
-        SET full_name = COALESCE(NULLIF(?, ''), full_name),
-            truck_plate = COALESCE(NULLIF(?, ''), truck_plate),
-            truck_model = COALESCE(NULLIF(?, ''), truck_model),
-            truck_color = COALESCE(NULLIF(?, ''), truck_color),
-            phone = COALESCE(NULLIF(?, ''), phone)
-        WHERE phone LIKE ?
-    """, (driver_name, truck_plate, truck_model, truck_color, new_phone, f"%{last9}%"))
-
-    # 2. Update driver_live table
+    # FAQAT driver_live jadvali yangilanadi (aholi ko'rishi uchun)!
+    # Asosiy drivers jadvali (Adminning qat'iy rasmiy ma'lumotlari) mutlaqo o'zgarmaydi!
     c.execute("""
         UPDATE driver_live
         SET driver_name = COALESCE(NULLIF(?, ''), driver_name),
@@ -350,14 +397,6 @@ def update_driver_profile(account_phone, driver_name=None, truck_plate=None, tru
             phone = COALESCE(NULLIF(?, ''), phone)
         WHERE phone LIKE ?
     """, (driver_name, truck_plate, truck_model, truck_color, new_phone, f"%{last9}%"))
-
-    # 3. Update users table
-    c.execute("""
-        UPDATE users
-        SET full_name = COALESCE(NULLIF(?, ''), full_name),
-            phone = COALESCE(NULLIF(?, ''), phone)
-        WHERE phone LIKE ?
-    """, (driver_name, new_phone, f"%{last9}%"))
 
     conn.commit()
     conn.close()
@@ -741,18 +780,6 @@ def upsert_driver_live(phone, driver_name="", truck_plate="", truck_model="", tr
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     """, (phone, f_name, f_plate, f_model, f_color, status, stage, lat_val, lng_val, f_reg, f_dist, f_mfy, f_street, f_street_name))
     
-    c.execute("""
-        UPDATE drivers 
-        SET full_name = COALESCE(NULLIF(?, ''), full_name),
-            truck_plate = COALESCE(NULLIF(?, ''), truck_plate),
-            truck_model = COALESCE(NULLIF(?, ''), truck_model),
-            truck_color = COALESCE(NULLIF(?, ''), truck_color),
-            assigned_mfy = COALESCE(NULLIF(?, ''), assigned_mfy),
-            assigned_district = COALESCE(NULLIF(?, ''), assigned_district),
-            assigned_region = COALESCE(NULLIF(?, ''), assigned_region)
-        WHERE phone LIKE ?
-    """, (driver_name, truck_plate, truck_model, truck_color, mfy, district, region, f"%{clean_p[-9:]}%"))
-                  
     conn.commit()
     conn.close()
     return True
