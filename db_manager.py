@@ -4,6 +4,16 @@ import os
 import time
 import re
 import json
+from datetime import datetime, timezone, timedelta
+
+# O'zbekiston vaqti (Toshkent: UTC+5)
+UZB_TZ = timezone(timedelta(hours=5))
+
+def get_uzb_now():
+    return datetime.now(UZB_TZ)
+
+def get_uzb_time_str(fmt="%Y-%m-%d %H:%M:%S"):
+    return datetime.now(UZB_TZ).strftime(fmt)
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "xonadon_plus.db")
 
@@ -31,9 +41,29 @@ def ensure_db_columns():
     conn.commit()
     conn.close()
 
+def ensure_uzb_timezone_migration():
+    """Bazada avval saqlangan barcha UTC vaqtlarini bir marta O'zbekiston (UTC+5) vaqtiga ko'chirish"""
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+        c.execute("CREATE TABLE IF NOT EXISTS sys_settings (key TEXT PRIMARY KEY, val TEXT)")
+        c.execute("SELECT val FROM sys_settings WHERE key = 'uzb_tz_migrated_v1'")
+        if not c.fetchone():
+            try:
+                c.execute("UPDATE users SET created_at = datetime(created_at, '+5 hours') WHERE created_at IS NOT NULL AND length(created_at) >= 10")
+                c.execute("UPDATE drivers SET created_at = datetime(created_at, '+5 hours') WHERE created_at IS NOT NULL AND length(created_at) >= 10")
+                c.execute("INSERT OR REPLACE INTO sys_settings (key, val) VALUES ('uzb_tz_migrated_v1', '1')")
+                conn.commit()
+            except Exception as e_mig:
+                print(f"[TZ MIGRATION INNER ERROR]: {e_mig}")
+        conn.close()
+    except Exception as e_out:
+        print(f"[TZ MIGRATION ERROR]: {e_out}")
+
 # Auto-run migration whenever module is loaded
 try:
     ensure_db_columns()
+    ensure_uzb_timezone_migration()
 except Exception as _e:
     pass
 
@@ -48,7 +78,7 @@ def init_db():
         full_phone TEXT,
         role TEXT,
         avatar_url TEXT,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        updated_at TIMESTAMP DEFAULT (datetime('now', '+5 hours'))
     );
     """)
 
@@ -64,7 +94,7 @@ def init_db():
         street TEXT DEFAULT 'koksoy_markaziy',
         house_number TEXT DEFAULT '',
         pin_code TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT (datetime('now', '+5 hours'))
     );
     """)
 
@@ -82,7 +112,7 @@ def init_db():
         assigned_mfy TEXT DEFAULT 'koksoy',
         password TEXT NOT NULL DEFAULT 'gaz2026',
         is_active INTEGER DEFAULT 1,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT (datetime('now', '+5 hours'))
     );
     """)
 
@@ -116,7 +146,7 @@ def init_db():
         mfy TEXT DEFAULT 'koksoy',
         street TEXT DEFAULT 'koksoy_markaziy',
         street_name TEXT DEFAULT 'Ko‘ksoy markaziy ko‘chasi',
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        updated_at TIMESTAMP DEFAULT (datetime('now', '+5 hours'))
     );
     """)
 
@@ -135,7 +165,7 @@ def init_db():
         chat_id INTEGER PRIMARY KEY,
         full_name TEXT,
         username TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT (datetime('now', '+5 hours'))
     );
     """)
 
@@ -195,10 +225,11 @@ def register_user(phone, full_name, role='resident', region='qashqadaryo', distr
         return {"ok": True, "exists": True, "user": u_dict}
 
     account_id = generate_unique_account_id("XP-")
+    now_uzb = get_uzb_time_str()
     c.execute("""
-    INSERT INTO users (phone, full_name, role, region, district, mfy, street, house_number, account_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (clean_p, full_name, role, region, district, mfy, street, house_number, account_id))
+    INSERT INTO users (phone, full_name, role, region, district, mfy, street, house_number, account_id, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (clean_p, full_name, role, region, district, mfy, street, house_number, account_id, now_uzb))
     conn.commit()
     user_id = c.lastrowid
     conn.close()
@@ -370,17 +401,18 @@ def add_driver(phone, full_name, truck_plate, password='gaz2026', truck_model='I
                 }
 
     account_id = generate_unique_account_id("HP-")
+    now_uzb = get_uzb_time_str()
 
     c.execute("""
-    INSERT INTO drivers (phone, full_name, truck_model, truck_plate, truck_color, assigned_region, assigned_district, assigned_mfy, password, account_id, is_active)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-    """, (clean_p, full_name, truck_model, clean_plate, truck_color, assigned_region, assigned_district, assigned_mfy, password, account_id))
+    INSERT INTO drivers (phone, full_name, truck_model, truck_plate, truck_color, assigned_region, assigned_district, assigned_mfy, password, account_id, is_active, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+    """, (clean_p, full_name, truck_model, clean_plate, truck_color, assigned_region, assigned_district, assigned_mfy, password, account_id, now_uzb))
     
     # Also ensure user table has driver role and same account_id
     c.execute("""
-    INSERT OR REPLACE INTO users (phone, full_name, role, region, district, mfy, account_id, two_step_password, two_step_hint)
-    VALUES (?, ?, 'driver', ?, ?, ?, ?, NULL, NULL)
-    """, (clean_p, full_name, assigned_region, assigned_district, assigned_mfy, account_id))
+    INSERT OR REPLACE INTO users (phone, full_name, role, region, district, mfy, account_id, two_step_password, two_step_hint, created_at)
+    VALUES (?, ?, 'driver', ?, ?, ?, ?, NULL, NULL, ?)
+    """, (clean_p, full_name, assigned_region, assigned_district, assigned_mfy, account_id, now_uzb))
     c.execute("UPDATE users SET two_step_password = NULL, two_step_hint = NULL WHERE phone = ? OR phone LIKE ?", (clean_p, f"%{clean_p[-9:]}%"))
 
     # Also register in driver_live with initial WAITING status
@@ -644,7 +676,7 @@ def terminate_other_sessions(phone, current_device_id):
 def update_driver_location(phone, lat, lng, status=None, stage=None, street=None, street_name=None):
     conn = get_connection()
     c = conn.cursor()
-    updates = ["lat = ?, lng = ?, updated_at = CURRENT_TIMESTAMP"]
+    updates = ["lat = ?, lng = ?, updated_at = (datetime('now', '+5 hours'))"]
     params = [float(lat), float(lng)]
     if status:
         updates.append("status = ?")
@@ -819,17 +851,17 @@ def save_user_avatar(phone, role, avatar_url):
             full_phone TEXT,
             role TEXT,
             avatar_url TEXT,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            updated_at TIMESTAMP DEFAULT (datetime('now', '+5 hours'))
         )
     """)
     c.execute("""
         INSERT OR REPLACE INTO user_avatars (phone_clean, full_phone, role, avatar_url, updated_at)
-        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+        VALUES (?, ?, ?, ?, (datetime('now', '+5 hours')))
     """, (clean_p[-9:], phone, role, avatar_url))
 
     if role == 'driver':
         c.execute("UPDATE drivers SET avatar_url = ? WHERE phone LIKE ?", (avatar_url, f"%{clean_p[-9:]}%"))
-        c.execute("UPDATE driver_live SET updated_at = CURRENT_TIMESTAMP WHERE phone LIKE ?", (f"%{clean_p[-9:]}%",))
+        c.execute("UPDATE driver_live SET updated_at = (datetime('now', '+5 hours')) WHERE phone LIKE ?", (f"%{clean_p[-9:]}%",))
     else:
         c.execute("UPDATE users SET avatar_url = ? WHERE phone LIKE ?", (avatar_url, f"%{clean_p[-9:]}%"))
     conn.commit()
@@ -904,7 +936,7 @@ def upsert_driver_live(phone, driver_name="", truck_plate="", truck_model="", tr
     c.execute("""
         INSERT OR REPLACE INTO driver_live 
         (phone, driver_name, truck_plate, truck_model, truck_color, status, stage, lat, lng, region, district, mfy, street, street_name, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, (datetime('now', '+5 hours')))
     """, (phone, f_name, f_plate, f_model, f_color, status, stage, lat_val, lng_val, f_reg, f_dist, f_mfy, f_street, f_street_name))
     
     conn.commit()

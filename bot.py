@@ -13,6 +13,29 @@ db_manager.init_db()
 import time
 import urllib.request
 import urllib.parse
+from datetime import datetime, timezone, timedelta
+
+# O'zbekiston vaqti (Toshkent: UTC+5)
+os.environ['TZ'] = 'Asia/Tashkent'
+if hasattr(time, 'tzset'):
+    try:
+        time.tzset()
+    except Exception:
+        pass
+
+UZB_TZ = timezone(timedelta(hours=5))
+
+def get_uzb_now():
+    return datetime.now(UZB_TZ)
+
+def get_uzb_time_str(fmt="%Y-%m-%d %H:%M:%S"):
+    return datetime.now(UZB_TZ).strftime(fmt)
+
+def format_uzb_timestamp(ts_val):
+    if not ts_val:
+        return get_uzb_time_str("%Y-%m-%d %H:%M")
+    s = str(ts_val).strip()
+    return s[:16]
 
 import threading
 import socket
@@ -2866,7 +2889,7 @@ def broadcast_street_alert(street_key, reg_key="qashqadaryo", dist_key="nishon",
             f"💰 <b>Davlat tarifi:</b> <b>20 000 so‘m</b> (1 dona balon)\n"
             f"⏳ <b>Taxminiy yetib kelish vaqti:</b> <b>~10-15 daqiqa</b>\n\n"
             f"{stage_guide}\n\n"
-            f"⏱ <i>Xabar yuborilgan vaqt: {time.strftime('%H:%M, %d.%m.%Y')}</i>\n"
+            f"⏱ <i>Xabar yuborilgan vaqt: {get_uzb_time_str('%H:%M, %d.%m.%Y')}</i>\n"
             f"🔥 <b>Xonadon+ Smart Mahalla Tizimi</b>"
         )
     else:
@@ -2880,7 +2903,7 @@ def broadcast_street_alert(street_key, reg_key="qashqadaryo", dist_key="nishon",
             f"📞 <b>Aloqa:</b> <code>{safe_html(current_driver_state['driver_phone'])}</code>\n"
             f"💰 <b>Davlat tarifi:</b> <b>20 000 so‘m</b> (1 dona balon)\n\n"
             f"{stage_guide}\n\n"
-            f"⏱ <i>Xabar yuborilgan vaqt: {time.strftime('%H:%M, %d.%m.%Y')}</i>\n"
+            f"⏱ <i>Xabar yuborilgan vaqt: {get_uzb_time_str('%H:%M, %d.%m.%Y')}</i>\n"
             f"🔥 <b>Xonadon+ Smart Mahalla Tizimi</b>"
         )
 
@@ -2897,7 +2920,7 @@ def broadcast_street_alert(street_key, reg_key="qashqadaryo", dist_key="nishon",
     }
 
     sent_count = 0
-    now_time = time.strftime('%H:%M, %d.%m.%Y')
+    now_time = get_uzb_time_str('%H:%M, %d.%m.%Y')
     current_driver_state["last_alert_time"] = now_time
 
     # =========================================================================
@@ -2958,7 +2981,7 @@ def broadcast_street_alert(street_key, reg_key="qashqadaryo", dist_key="nishon",
                 f"📞 <b>Aloqa:</b> <code>{safe_html(current_driver_state['driver_phone'])}</code>\n"
                 f"💰 <b>Davlat tarifi:</b> <b>20 000 so‘m</b> (1 dona balon)\n\n"
                 f"{stage_guide}\n\n"
-                f"⏱ <i>Xabar yuborilgan vaqt: {time.strftime('%H:%M, %d.%m.%Y')}</i>\n"
+                f"⏱ <i>Xabar yuborilgan vaqt: {get_uzb_time_str('%H:%M, %d.%m.%Y')}</i>\n"
                 f"🔥 <b>Xonadon+ Smart Mahalla Tizimi</b>"
             )
 
@@ -2988,7 +3011,7 @@ def handle_start(chat_id, user_info):
             "chat_id": chat_id,
             "first_name": user_info.get("first_name", ""),
             "username": user_info.get("username", ""),
-            "registered_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "registered_at": get_uzb_time_str("%Y-%m-%d %H:%M:%S"),
             "phone_verified": False,
             "status": "unverified",
             "phone": None,
@@ -3051,7 +3074,7 @@ def handle_message(msg):
             "chat_id": chat_id,
             "first_name": user_info.get("first_name", ""),
             "username": user_info.get("username", ""),
-            "registered_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "registered_at": get_uzb_time_str("%Y-%m-%d %H:%M:%S"),
             "phone_verified": False,
             "status": "unverified",
             "phone": None,
@@ -3079,7 +3102,7 @@ def handle_message(msg):
             user_sub["raw_phone"] = digits
             user_sub["phone"] = formatted
             user_sub["phone_verified"] = True
-            user_sub["phone_verified_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            user_sub["phone_verified_at"] = get_uzb_time_str("%Y-%m-%d %H:%M:%S")
 
             # Serverda bu raqamga biriktirilgan XP- ID bor-yo'qligini tekshiramiz
             existing_user = db_manager.get_user_by_phone(formatted)
@@ -3940,7 +3963,7 @@ def handle_message(msg):
             user_sub["raw_phone"] = verified_raw
             user_sub["phone_verified"] = True
             user_sub["status"] = "verified"
-            user_sub["phone_verified_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            user_sub["phone_verified_at"] = get_uzb_time_str("%Y-%m-%d %H:%M:%S")
             user_sub.pop("pending_otp", None)
             try:
                 u_reg = db_manager.register_user(verified_phone, user_info.get("first_name", "Aholi"), role='resident')
@@ -6762,7 +6785,7 @@ def generate_users_excel_csv(region=None, district=None, mfy=None, street=None):
     safe_file_suffix = re.sub(r'[^a-zA-Z0-9_]', '_', file_suffix)
 
     import tempfile
-    cur_time_str = time.strftime("%d.%m.%Y %H:%M")
+    cur_time_str = get_uzb_time_str("%d.%m.%Y %H:%M")
     tfile = os.path.join(tempfile.gettempdir(), f"Aholi_royxati_{safe_file_suffix}_{int(time.time())}.xlsx")
 
     headers = [
@@ -6797,7 +6820,7 @@ def generate_users_excel_csv(region=None, district=None, mfy=None, street=None):
             raw_u_mn = ADDRESS_DB.get(u_reg, {}).get("districts", {}).get(u_dist, {}).get("mfys", {}).get(u_mfy, {}).get("name", u_mfy)
             u_mn = raw_u_mn if ("MFY" in raw_u_mn or not raw_u_mn) else f"«{raw_u_mn}» MFY"
             u_sn = ADDRESS_DB.get(u_reg, {}).get("districts", {}).get(u_dist, {}).get("mfys", {}).get(u_mfy, {}).get("streets", {}).get(u_st, u_st)
-            created_dt = str(u.get("created_at") or "")[:16]
+            created_dt = format_uzb_timestamp(u.get("created_at"))
 
             prepared_rows.append([idx, acc_id, fname, phone, u_rn, u_dn, u_mn, u_sn, created_dt])
 
