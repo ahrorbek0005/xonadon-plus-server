@@ -2488,6 +2488,74 @@ def tg_request(method, payload=None):
         print(f"Telegram API request failed ({method}):", e)
         return None
 
+
+def send_document(chat_id, file_path, caption="", parse_mode="HTML"):
+    try:
+        boundary = "----WebKitFormBoundary" + str(int(time.time() * 1000))
+        lines = []
+        lines.append(f"--{boundary}".encode())
+        lines.append(b'Content-Disposition: form-data; name="chat_id"')
+        lines.append(b"")
+        lines.append(str(chat_id).encode())
+
+        if caption:
+            lines.append(f"--{boundary}".encode())
+            lines.append(b'Content-Disposition: form-data; name="caption"')
+            lines.append(b"")
+            lines.append(caption.encode("utf-8"))
+            if parse_mode:
+                lines.append(f"--{boundary}".encode())
+                lines.append(b'Content-Disposition: form-data; name="parse_mode"')
+                lines.append(b"")
+                lines.append(parse_mode.encode())
+
+        fname = os.path.basename(file_path)
+        lines.append(f"--{boundary}".encode())
+        lines.append(f'Content-Disposition: form-data; name="document"; filename="{fname}"'.encode("utf-8"))
+        lines.append(b"Content-Type: text/csv; charset=utf-8")
+        lines.append(b"")
+        with open(file_path, "rb") as f:
+            file_data = f.read()
+        lines.append(file_data)
+        lines.append(f"--{boundary}--".encode())
+        lines.append(b"")
+        body = b"\r\n".join(lines)
+
+        req = urllib.request.Request(
+            f"{API_URL}/sendDocument",
+            data=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"}
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode())
+    except Exception as e:
+        print(f"Error in send_document: {e}")
+        return None
+
+def send_driver_card(target_chat_id, d):
+    d_name = d.get('full_name', '')
+    d_id = d.get('account_id') or 'HP-100000'
+    d_phone = d.get('phone', '')
+    d_plate = d.get('truck_plate', '')
+    d_pass = d.get('password', '')
+
+    card = (
+        f"👤 <b>I.F:</b> {safe_html(d_name)}\n"
+        f"🆔 <b>Maxsus ID:</b> <code>{safe_html(d_id)}</code>\n"
+        f"📱 <b>Telefon (Login):</b> <code>{safe_html(d_phone)}</code>\n"
+        f"🚛 <b>Mashina raqami:</b> <code>{safe_html(d_plate)}</code>\n"
+        f"🔑 <b>Kirish paroli:</b> <code>{safe_html(d_pass)}</code>"
+    )
+    inline_kb = {
+        "inline_keyboard": [
+            [
+                {"text": "✏️ Tahrirlash", "callback_data": f"edtdrv_{d_phone}"},
+                {"text": "❌ O‘chirish", "callback_data": f"deldriver_{d_phone}"}
+            ]
+        ]
+    }
+    send_message(target_chat_id, card, reply_markup=inline_kb, parse_mode="HTML")
+
 def send_message(chat_id, text, reply_markup=None, parse_mode="HTML"):
     payload = {
         "chat_id": chat_id,
@@ -3115,7 +3183,50 @@ def handle_message(msg):
             )
             return
 
-        # 5. Aholi ro'yxati Excel
+        # 5. Yangi haydovchi qo'shish
+        if text in ["➕ Yangi haydovchi qo‘shish", "/add_driver"]:
+            user_sub["admin_state"] = "awaiting_driver_name"
+            save_subscribers(subs)
+            msg_prompt = (
+                "➕ <b>YANGI HAYDOVCHI QO‘SHISH (1/4-bosqich)</b>\n\n"
+                "1️⃣ Iltimos, yangi haydovchining <b>Ism va Familiyasini</b> kiriting:\n"
+                "<i>(Masalan: Ahror Suyunov)</i>"
+            )
+            send_message(chat_id, msg_prompt, parse_mode="HTML")
+            return
+
+        # 6. Haydovchilar ro'yxati
+        if text in ["📋 Haydovchilar ro‘yxati", "/drivers"]:
+            drivers = db_manager.get_all_drivers()
+            if not drivers:
+                send_message(chat_id, "Hozircha tizimda faol haydovchilar yo‘q.")
+                return
+            send_message(chat_id, f"📋 <b>TIZIMDAGI HAYDOVCHILAR (Jami: {len(drivers)} ta):</b>\n<i>Tahrirlash yoki o‘chirish uchun kerakli tugmani bosing:</i>", parse_mode="HTML")
+            for d in drivers:
+                send_driver_card(chat_id, d)
+            return
+
+        # 7. Fuqarolar statistikasi
+        if text in ["👥 Fuqarolar statistikasi", "/users"]:
+            conn = db_manager.get_connection()
+            c = conn.cursor()
+            c.execute("SELECT COUNT(*) as u_count FROM users WHERE role = 'resident'")
+            u_count = c.fetchone()["u_count"]
+            c.execute("SELECT COUNT(*) as s_count FROM sessions WHERE is_active = 1")
+            s_count = c.fetchone()["s_count"]
+            conn.close()
+            subs = load_subscribers()
+            stat_text = (
+                "👥 <b>XONADON+ FUQAROLAR STATISTIKASI</b>\n\n"
+                f"👤 <b>Ro‘yxatdan o‘tgan fuqarolar (SQLite):</b> <b>{u_count} nafar</b>\n"
+                f"🤖 <b>Telegram bot obunachilari:</b> <b>{len(subs)} nafar</b>\n"
+                f"🟢 <b>Faol veb-sessiyalar:</b> <b>{s_count} ta qurilma</b>\n"
+                f"🛡️ <b>Tizim holati:</b> Barqaror (Server onlayn ✅)"
+            )
+            send_message(chat_id, stat_text, parse_mode="HTML")
+            return
+
+        # 8. Aholi ro'yxati Excel
         if text in ["👥 Aholi ro‘yxati (Excel)", "/users_excel", "📋 Aholi ro‘yxati (Excel)"]:
             kb = {
                 "inline_keyboard": [
@@ -3328,174 +3439,10 @@ def handle_message(msg):
             send_message(chat_id, info_text, reply_markup=kb, parse_mode="HTML")
             return
 
-        # 12. Agar admin biror boshqa tasodifiy matn yozsa (masalan: ygyu) -> FUQARO MENYUSIGA TUSHIB KETMAYDI!
-        if not user_sub.get("admin_state"):
-            send_message(
-                chat_id,
-                "👑 <b>Admin boshqaruv paneli:</b>\nIltimos, kerakli amalni pastdagi tugmalar orqali tanlang 👇",
-                reply_markup=get_admin_reply_keyboard(),
-                parse_mode="HTML"
-            )
-            return
 
-    # --- ADMIN BOSHQARUVI (/admin_login yoki /admin) ---
-    if text.startswith("/admin_login") or text == "/admin" or text.startswith("/admin "):
-        parts = text.split(maxsplit=1)
-        entered_pass = parts[1].strip() if len(parts) > 1 else None
-
-        if entered_pass and entered_pass == ADMIN_PASSWORD:
-            user_sub["is_admin_active"] = True
-            user_sub.pop("admin_login_pending", None)
-            db_manager.add_bot_admin(chat_id, user_info.get("first_name", "Admin"), user_info.get("username", ""))
-            save_subscribers(subs)
-            admin_menu_text = (
-                "👑 <b>XONADON+ BOSHQARUV PANELI (BOSH ADMIN)</b>\n\n"
-                "Xush kelibsiz, Administrator! Ushbu bo‘lim faqat sizga ko‘rinadi.\n"
-                "Tizimni boshqarish uchun pastdagi tugmalardan foydalanishingiz mumkin:\n\n"
-                "🔍 <b>/search_driver</b> — Haydovchini qidirish\n"
-                "🔍 <b>/search_user</b> — Aholini qidirish\n"
-                "➕ <b>/add_driver</b> — Yangi haydovchi qo‘shish\n"
-                "📋 <b>/drivers</b> — Barcha haydovchilar ro‘yxati\n"
-                "👥 <b>/users_excel</b> — Aholi ro‘yxati (Excel yuklab olish)\n"
-                "📊 <b>/users</b> — Fuqarolar statistikasi\n"
-                "🚪 <b>/exit_admin</b> — Admin rejimidan chiqish"
-            )
-            inline_admin_kb = {
-                "inline_keyboard": [
-                    [{"text": "🔍 Haydovchini qidirish", "callback_data": "admin_search_driver"}, {"text": "🔍 Aholini qidirish", "callback_data": "admin_search_user"}],
-                    [{"text": "➕ Yangi haydovchi qo‘shish", "callback_data": "admin_add_driver"}],
-                    [{"text": "📋 Haydovchilar ro‘yxati", "callback_data": "admin_list_drivers"}, {"text": "👥 Aholi ro‘yxati (Excel)", "callback_data": "admin_users_excel"}],
-                    [{"text": "📊 Fuqarolar statistikasi", "callback_data": "admin_users_stat"}],
-                    [{"text": "🚪 Admin rejimidan chiqish", "callback_data": "admin_exit"}]
-                ]
-            }
-            send_message(chat_id, "👑 <b>Admin boshqaruv paneli faollashtirildi!</b>", reply_markup=get_admin_reply_keyboard(), parse_mode="HTML")
-            send_message(chat_id, admin_menu_text, reply_markup=inline_admin_kb, parse_mode="HTML")
-            return
-        else:
-            user_sub["admin_login_pending"] = True
-            save_subscribers(subs)
-            send_message(
-                chat_id,
-                "🔐 <b>Admin sifatida kirish:</b>\nIltimos, maxsus admin parolini kiriting:",
-                parse_mode="HTML"
-            )
-            return
-
-    # Agar foydalanuvchi admin parolini kiritayotgan bo'lsa
-    if user_sub.get("admin_login_pending"):
-        if text.strip() == ADMIN_PASSWORD:
-            user_sub["is_admin_active"] = True
-            user_sub.pop("admin_login_pending", None)
-            db_manager.add_bot_admin(chat_id, user_info.get("first_name", "Admin"), user_info.get("username", ""))
-            save_subscribers(subs)
-            admin_menu_text = (
-                "👑 <b>XONADON+ BOSHQARUV PANELI (BOSH ADMIN)</b>\n\n"
-                "Xush kelibsiz, Administrator! Ushbu bo‘lim faqat sizga ko‘rinadi.\n"
-                "Tizimni boshqarish uchun pastdagi tugmalardan foydalanishingiz mumkin:\n\n"
-                "🔍 <b>/search_driver</b> — Haydovchini qidirish\n"
-                "🔍 <b>/search_user</b> — Aholini qidirish\n"
-                "➕ <b>/add_driver</b> — Yangi haydovchi qo‘shish\n"
-                "📋 <b>/drivers</b> — Barcha haydovchilar ro‘yxati\n"
-                "👥 <b>/users_excel</b> — Aholi ro‘yxati (Excel yuklab olish)\n"
-                "📊 <b>/users</b> — Fuqarolar statistikasi\n"
-                "🚪 <b>/exit_admin</b> — Admin rejimidan chiqish"
-            )
-            inline_admin_kb = {
-                "inline_keyboard": [
-                    [{"text": "🔍 Haydovchini qidirish", "callback_data": "admin_search_driver"}, {"text": "🔍 Aholini qidirish", "callback_data": "admin_search_user"}],
-                    [{"text": "➕ Yangi haydovchi qo‘shish", "callback_data": "admin_add_driver"}],
-                    [{"text": "📋 Haydovchilar ro‘yxati", "callback_data": "admin_list_drivers"}, {"text": "👥 Aholi ro‘yxati (Excel)", "callback_data": "admin_users_excel"}],
-                    [{"text": "📊 Fuqarolar statistikasi", "callback_data": "admin_users_stat"}],
-                    [{"text": "🚪 Admin rejimidan chiqish", "callback_data": "admin_exit"}]
-                ]
-            }
-            send_message(chat_id, "👑 <b>Admin boshqaruv paneli faollashtirildi!</b>", reply_markup=get_admin_reply_keyboard(), parse_mode="HTML")
-            send_message(chat_id, admin_menu_text, reply_markup=inline_admin_kb, parse_mode="HTML")
-            return
-        elif text in ["/start", "⬅️ Asosiy menyuga qaytish"]:
-            user_sub.pop("admin_login_pending", None)
-            save_subscribers(subs)
-        else:
-            send_message(chat_id, "❌ <b>Noto‘g‘ri parol!</b> Iltimos, maxsus admin parolini qaytadan kiriting:", parse_mode="HTML")
-            return
-            return
-
-    # Helper function to send driver card with Edit and Delete inline buttons
-    def send_driver_card(target_chat_id, d):
-        d_name = d.get('full_name', '')
-        d_id = d.get('account_id') or 'HP-100000'
-        d_phone = d.get('phone', '')
-        d_plate = d.get('truck_plate', '')
-        d_pass = d.get('password', '')
-
-        card = (
-            f"👤 <b>I.F:</b> {safe_html(d_name)}\n"
-            f"🆔 <b>Maxsus ID:</b> <code>{safe_html(d_id)}</code>\n"
-            f"📱 <b>Telefon (Login):</b> <code>{safe_html(d_phone)}</code>\n"
-            f"🚛 <b>Mashina raqami:</b> <code>{safe_html(d_plate)}</code>\n"
-            f"🔑 <b>Kirish paroli:</b> <code>{safe_html(d_pass)}</code>"
-        )
-        inline_kb = {
-            "inline_keyboard": [
-                [
-                    {"text": "✏️ Tahrirlash", "callback_data": f"edtdrv_{d_phone}"},
-                    {"text": "❌ O‘chirish", "callback_data": f"deldriver_{d_phone}"}
-                ]
-            ]
-        }
-        send_message(target_chat_id, card, reply_markup=inline_kb, parse_mode="HTML")
-
-    # Admin actions
-    if user_sub.get("is_admin_active") or db_manager.is_bot_admin(chat_id):
-        if text == "➕ Yangi haydovchi qo‘shish" or text == "/add_driver":
-            user_sub["admin_state"] = "awaiting_driver_name"
-            save_subscribers(subs)
-            msg_prompt = (
-                "➕ <b>YANGI HAYDOVCHI QO‘SHISH (1/4-bosqich)</b>\n\n"
-                "1️⃣ Iltimos, yangi haydovchining <b>Ism va Familiyasini</b> kiriting:\n"
-                "<i>(Masalan: Ahror Suyunov)</i>"
-            )
-            send_message(chat_id, msg_prompt, parse_mode="HTML")
-            return
-
+        # 12. Yangi haydovchi qo'shish bosqichlari:
         # 1-bosqich: Ism-familiya kiritildi -> Tekshiruv va Telefon raqam so'rash
-        elif user_sub.get("admin_state") == "awaiting_driver_name":
-            # Check if user passed full line with pipes fallback
-            if "|" in text:
-                parts = [p.strip() for p in text.split("|")]
-                if len(parts) >= 3:
-                    d_name = parts[0]
-                    d_phone = parts[1]
-                    d_plate = parts[2]
-                    d_pass = parts[3] if len(parts) > 3 else "gaz2026"
-                    res = db_manager.add_driver(phone=d_phone, full_name=d_name, truck_plate=d_plate, password=d_pass, assigned_mfy="koksoy")
-                    d_id = res.get("account_id") if isinstance(res, dict) else ""
-                    if not d_id:
-                        d_obj = db_manager.get_driver_by_phone(d_phone)
-                        d_id = d_obj.get("account_id", "") if d_obj else ""
-                    # Clear in-memory active_driver_states so new driver starts strictly in WAITING mode
-                    clean_p = re.sub(r'\D', '', d_phone)[-9:]
-                    active_driver_states.pop(clean_p, None)
-                    for k in list(active_driver_states.keys()):
-                        if clean_p in k or k in clean_p:
-                            active_driver_states.pop(k, None)
-                    user_sub.pop("admin_state", None)
-                    save_subscribers(subs)
-                    send_message(
-                        chat_id,
-                        f"✅ <b>HAYDOVCHI MUVAFFAQIYATLI QO‘SHILDI!</b>\n\n"
-                        f"👤 <b>I.F:</b> {safe_html(d_name)}\n"
-                        f"🆔 <b>Maxsus ID:</b> <code>{safe_html(d_id)}</code>\n"
-                        f"📱 <b>Login (Telefon):</b> <code>{safe_html(d_phone)}</code>\n"
-                        f"🚛 <b>Mashina raqami:</b> <code>{safe_html(d_plate)}</code>\n"
-                        f"📍 <b>Hudud:</b> «Ko‘ksoy» MFY, Nishon tumani\n"
-                        f"🔑 <b>Kirish paroli:</b> <code>{safe_html(d_pass)}</code>\n\n"
-                        "Endi haydovchi ilovaga ushbu telefon, mashina raqami va parol orqali kira oladi!",
-                        parse_mode="HTML"
-                    )
-                    return
-
+        if user_sub.get("admin_state") == "awaiting_driver_name":
             d_name = text.strip()
             # Faqat harflar, probel va tutuq belgisi tekshiruvi (raqamlar taqiqlanadi)
             if any(char.isdigit() for char in d_name) or len(d_name) < 3:
@@ -3518,7 +3465,7 @@ def handle_message(msg):
             return
 
         # 2-bosqich: Telefon kiritildi -> Tekshiruv va Mashina raqamini so'rash
-        elif user_sub.get("admin_state") == "awaiting_driver_phone":
+        if user_sub.get("admin_state") == "awaiting_driver_phone":
             raw_phone = text.strip().replace(" ", "")
             # Qat'iy tekshiruv: +998 bilan boshlanishi va jami 13 ta belgi bo'lishi kerak
             if not (raw_phone.startswith("+998") and len(raw_phone) == 13 and raw_phone[1:].isdigit()):
@@ -3542,7 +3489,7 @@ def handle_message(msg):
             return
 
         # 3-bosqich: Mashina raqami kiritildi -> Tekshiruv va Parol so'rash
-        elif user_sub.get("admin_state") == "awaiting_driver_plate":
+        if user_sub.get("admin_state") == "awaiting_driver_plate":
             raw_plate = text.strip().upper()
             clean_plate = re.sub(r'[^A-Z0-9]', '', raw_plate)
             if len(clean_plate) > 8 or len(clean_plate) < 4:
@@ -3565,7 +3512,7 @@ def handle_message(msg):
             return
 
         # 4-bosqich: Parol kiritildi -> Bazaga saqlash va yakunlash
-        elif user_sub.get("admin_state") == "awaiting_driver_password":
+        if user_sub.get("admin_state") == "awaiting_driver_password":
             d_pass = text.strip()
             d_name = user_sub.get("new_d_name", "Haydovchi")
             d_phone = user_sub.get("new_d_phone", "+998912345678")
@@ -3606,73 +3553,11 @@ def handle_message(msg):
                 f"🔑 <b>Kirish paroli:</b> <code>{safe_html(d_pass)}</code>\n\n"
                 "Endi haydovchi ilovaga ushbu telefon, mashina raqami va parol orqali kira oladi!"
             )
-            send_message(chat_id, succ_text, parse_mode="HTML")
+            send_message(chat_id, succ_text, reply_markup=get_admin_reply_keyboard(), parse_mode="HTML")
             return
 
-        elif text == "🔍 Haydovchini qidirish" or text == "/search_driver":
-            user_sub.pop("admin_state", None)
-            save_subscribers(subs)
-            search_kb = {
-                "keyboard": [
-                    [{"text": "🆔 ID orqali qidirish"}, {"text": "📱 Telefon raqam orqali qidirish"}],
-                    [{"text": "⬅️ Admin menyusiga qaytish"}]
-                ],
-                "resize_keyboard": True
-            }
-            send_message(chat_id, "🔍 <b>HAYDOVCHINI QIDIRISH:</b>\n\nQidirish usulini tanlang 👇", reply_markup=search_kb, parse_mode="HTML")
-            return
-
-        elif text == "🆔 ID orqali qidirish":
-            user_sub["admin_state"] = "awaiting_search_driver_id"
-            save_subscribers(subs)
-            send_message(chat_id, "🆔 Haydovchining <b>Maxsus ID-sini</b> kiriting:\n<i>(Masalan: HP-123456 yoki shunchaki 123456)</i>", parse_mode="HTML")
-            return
-
-        elif text == "📱 Telefon raqam orqali qidirish":
-            user_sub["admin_state"] = "awaiting_search_driver_phone"
-            save_subscribers(subs)
-            send_message(chat_id, "📱 Haydovchining <b>Telefon raqamini</b> kiriting:\n<i>(Masalan: +998912345678 yoki 912345678)</i>", parse_mode="HTML")
-            return
-
-        elif text == "⬅️ Admin menyusiga qaytish":
-            user_sub.pop("admin_state", None)
-            save_subscribers(subs)
-            admin_kb = {
-                "keyboard": [
-                    [{"text": "➕ Yangi haydovchi qo‘shish"}, {"text": "🔍 Haydovchini qidirish"}],
-                    [{"text": "📋 Haydovchilar ro‘yxati"}, {"text": "👥 Fuqarolar statistikasi"}],
-                    [{"text": "⬅️ Asosiy menyuga qaytish"}]
-                ],
-                "resize_keyboard": True
-            }
-            send_message(chat_id, "👑 <b>Admin boshqaruv paneli:</b>", reply_markup=admin_kb, parse_mode="HTML")
-            return
-
-        elif user_sub.get("admin_state") == "awaiting_search_driver_id":
-            user_sub.pop("admin_state", None)
-            save_subscribers(subs)
-            s_query = text.strip()
-            drv = db_manager.get_driver_by_account_id(s_query)
-            if not drv:
-                send_message(chat_id, f"❌ <b>«{safe_html(s_query)}»</b> ID bo‘yicha hech qanday haydovchi topilmadi.", parse_mode="HTML")
-            else:
-                send_message(chat_id, "🔍 <b>QIDIRUV NATIJASI:</b>", parse_mode="HTML")
-                send_driver_card(chat_id, drv)
-            return
-
-        elif user_sub.get("admin_state") == "awaiting_search_driver_phone":
-            user_sub.pop("admin_state", None)
-            save_subscribers(subs)
-            s_query = text.strip()
-            drv = db_manager.get_driver_by_phone(s_query)
-            if not drv:
-                send_message(chat_id, f"❌ <b>«{safe_html(s_query)}»</b> telefon raqamli haydovchi topilmadi.", parse_mode="HTML")
-            else:
-                send_message(chat_id, "🔍 <b>QIDIRUV NATIJASI:</b>", parse_mode="HTML")
-                send_driver_card(chat_id, drv)
-            return
-
-        elif user_sub.get("admin_state") == "awaiting_edit_value":
+        # 13. Haydovchi ma'lumotlarini tahrirlash qiymatini qabul qilish
+        if user_sub.get("admin_state") == "awaiting_edit_value":
             p_target = user_sub.get("pending_edit_target", {})
             target_phone = p_target.get("phone")
             field = p_target.get("field")
@@ -3752,40 +3637,140 @@ def handle_message(msg):
             send_message(chat_id, confirm_msg, reply_markup=confirm_kb, parse_mode="HTML")
             return
 
-        elif text == "📋 Haydovchilar ro‘yxati" or text == "/drivers":
-            drivers = db_manager.get_all_drivers()
-            if not drivers:
-                send_message(chat_id, "Hozircha tizimda haydovchilar yo‘q.")
-                return
-            send_message(chat_id, f"📋 <b>TIZIMDAGI HAYDOVCHILAR (Jami: {len(drivers)} ta):</b>\n<i>Tahrirlash yoki o‘chirish uchun kerakli tugmani bosing:</i>", parse_mode="HTML")
-            for d in drivers:
-                send_driver_card(chat_id, d)
-            return
-
-        elif text == "👥 Fuqarolar statistikasi" or text == "/users":
-            conn = db_manager.get_connection()
-            c = conn.cursor()
-            c.execute("SELECT COUNT(*) as u_count FROM users WHERE role = 'resident'")
-            u_count = c.fetchone()["u_count"]
-            c.execute("SELECT COUNT(*) as s_count FROM sessions WHERE is_active = 1")
-            s_count = c.fetchone()["s_count"]
-            conn.close()
-
-            stat_text = (
-                f"📊 <b>XONADON+ TIZIM STATISTIKASI:</b>\n\n"
-                f"👤 Ro‘yxatdan o‘tgan fuqarolar: <b>{u_count} ta</b>\n"
-                f"📱 Faol seanslar (qurilmalar): <b>{s_count} ta</b>\n"
-                f"🤖 Telegram bot obunachilari: <b>{len(subs)} ta</b>\n"
-                f"📍 Pilot hudud: <b>Qashqadaryo, Nishon tumani, «Ko‘ksoy» MFY</b>"
+        # 12. Agar admin biror boshqa tasodifiy matn yozsa (masalan: ygyu) -> FUQARO MENYUSIGA TUSHIB KETMAYDI!
+        if not user_sub.get("admin_state"):
+            send_message(
+                chat_id,
+                "👑 <b>Admin boshqaruv paneli:</b>\nIltimos, kerakli amalni pastdagi tugmalar orqali tanlang 👇",
+                reply_markup=get_admin_reply_keyboard(),
+                parse_mode="HTML"
             )
-            send_message(chat_id, stat_text, parse_mode="HTML")
             return
 
-        elif text == "⬅️ Asosiy menyuga qaytish" or text == "/exit_admin":
-            user_sub.pop("admin_state", None)
+    # --- ADMIN BOSHQARUVI (/admin_login yoki /admin) ---
+    if text.startswith("/admin_login") or text == "/admin" or text.startswith("/admin "):
+        parts = text.split(maxsplit=1)
+        entered_pass = parts[1].strip() if len(parts) > 1 else None
+
+        if entered_pass and entered_pass == ADMIN_PASSWORD:
+            user_sub["is_admin_active"] = True
+            user_sub.pop("admin_login_pending", None)
+            db_manager.add_bot_admin(chat_id, user_info.get("first_name", "Admin"), user_info.get("username", ""))
             save_subscribers(subs)
-            send_message(chat_id, "Asosiy menyuga qaytdingiz.", reply_markup=get_main_keyboard(chat_id))
+            admin_menu_text = (
+                "👑 <b>XONADON+ BOSHQARUV PANELI (BOSH ADMIN)</b>\n\n"
+                "Xush kelibsiz, Administrator! Ushbu bo‘lim faqat sizga ko‘rinadi.\n"
+                "Tizimni boshqarish uchun pastdagi tugmalardan foydalanishingiz mumkin:\n\n"
+                "🔍 <b>/search_driver</b> — Haydovchini qidirish\n"
+                "🔍 <b>/search_user</b> — Aholini qidirish\n"
+                "➕ <b>/add_driver</b> — Yangi haydovchi qo‘shish\n"
+                "📋 <b>/drivers</b> — Barcha haydovchilar ro‘yxati\n"
+                "👥 <b>/users_excel</b> — Aholi ro‘yxati (Excel yuklab olish)\n"
+                "📊 <b>/users</b> — Fuqarolar statistikasi\n"
+                "🚪 <b>/exit_admin</b> — Admin rejimidan chiqish"
+            )
+            inline_admin_kb = {
+                "inline_keyboard": [
+                    [{"text": "🔍 Haydovchini qidirish", "callback_data": "admin_search_driver"}, {"text": "🔍 Aholini qidirish", "callback_data": "admin_search_user"}],
+                    [{"text": "➕ Yangi haydovchi qo‘shish", "callback_data": "admin_add_driver"}],
+                    [{"text": "📋 Haydovchilar ro‘yxati", "callback_data": "admin_list_drivers"}, {"text": "👥 Aholi ro‘yxati (Excel)", "callback_data": "admin_users_excel"}],
+                    [{"text": "📊 Fuqarolar statistikasi", "callback_data": "admin_users_stat"}],
+                    [{"text": "🚪 Admin rejimidan chiqish", "callback_data": "admin_exit"}]
+                ]
+            }
+            send_message(chat_id, "👑 <b>Admin boshqaruv paneli faollashtirildi!</b>", reply_markup=get_admin_reply_keyboard(), parse_mode="HTML")
+            send_message(chat_id, admin_menu_text, reply_markup=inline_admin_kb, parse_mode="HTML")
             return
+        else:
+            user_sub["admin_login_pending"] = True
+            save_subscribers(subs)
+            send_message(
+                chat_id,
+                "🔐 <b>Admin sifatida kirish:</b>\nIltimos, maxsus admin parolini kiriting:",
+                parse_mode="HTML"
+            )
+            return
+
+    # Agar foydalanuvchi admin parolini kiritayotgan bo'lsa
+    if user_sub.get("admin_login_pending"):
+        # Agar foydalanuvchi bekor qilishni yoki asosiy menyu tugmalaridan birini bossa -> Parol kutish bekor bo'ladi!
+        citizen_cmds = [
+            "👤 Profilim va Telefon raqam", "✏️ Manzilni o‘zgartirish", "📍 Manzilimni biriktirish",
+            "🚚 Gaz mashinasi qayerda?", "💳 Balon uchun to‘lov", "🛡️ Xavfsizlik qoidalari",
+            "⬅️ Asosiy menyuga qaytish", "/start", "❌ Bekor qilish", "/cancel"
+        ]
+        if text in citizen_cmds:
+            user_sub.pop("admin_login_pending", None)
+            save_subscribers(subs)
+            # O'sha tugma keyingi handlerlarda o'z ishini davom ettirishi uchun return qilmaymiz, faqat paroldan chiqamiz
+        elif text.strip() == ADMIN_PASSWORD:
+            user_sub["is_admin_active"] = True
+            user_sub.pop("admin_login_pending", None)
+            db_manager.add_bot_admin(chat_id, user_info.get("first_name", "Admin"), user_info.get("username", ""))
+            save_subscribers(subs)
+            admin_menu_text = (
+                "👑 <b>XONADON+ BOSHQARUV PANELI (BOSH ADMIN)</b>\n\n"
+                "Xush kelibsiz, Administrator! Ushbu bo‘lim faqat sizga ko‘rinadi.\n"
+                "Tizimni boshqarish uchun pastdagi tugmalardan foydalanishingiz mumkin:\n\n"
+                "🔍 <b>/search_driver</b> — Haydovchini qidirish\n"
+                "🔍 <b>/search_user</b> — Aholini qidirish\n"
+                "➕ <b>/add_driver</b> — Yangi haydovchi qo‘shish\n"
+                "📋 <b>/drivers</b> — Barcha haydovchilar ro‘yxati\n"
+                "👥 <b>/users_excel</b> — Aholi ro‘yxati (Excel yuklab olish)\n"
+                "📊 <b>/users</b> — Fuqarolar statistikasi\n"
+                "🚪 <b>/exit_admin</b> — Admin rejimidan chiqish"
+            )
+            inline_admin_kb = {
+                "inline_keyboard": [
+                    [{"text": "🔍 Haydovchini qidirish", "callback_data": "admin_search_driver"}, {"text": "🔍 Aholini qidirish", "callback_data": "admin_search_user"}],
+                    [{"text": "➕ Yangi haydovchi qo‘shish", "callback_data": "admin_add_driver"}],
+                    [{"text": "📋 Haydovchilar ro‘yxati", "callback_data": "admin_list_drivers"}, {"text": "👥 Aholi ro‘yxati (Excel)", "callback_data": "admin_users_excel"}],
+                    [{"text": "📊 Fuqarolar statistikasi", "callback_data": "admin_users_stat"}],
+                    [{"text": "🚪 Admin rejimidan chiqish", "callback_data": "admin_exit"}]
+                ]
+            }
+            send_message(chat_id, "👑 <b>Admin boshqaruv paneli faollashtirildi!</b>", reply_markup=get_admin_reply_keyboard(), parse_mode="HTML")
+            send_message(chat_id, admin_menu_text, reply_markup=inline_admin_kb, parse_mode="HTML")
+            return
+        else:
+            cancel_kb = {
+                "inline_keyboard": [
+                    [{"text": "❌ Bekor qilish (Asosiy menyuga qaytish)", "callback_data": "cancel_admin_login"}]
+                ]
+            }
+            send_message(
+                chat_id,
+                "❌ <b>Noto‘g‘ri parol!</b> Iltimos, maxsus admin parolini qaytadan kiriting yoki pastdagi bekor qilish tugmasini bosing:",
+                reply_markup=cancel_kb,
+                parse_mode="HTML"
+            )
+            return
+            return
+
+    # Helper function to send driver card with Edit and Delete inline buttons
+    def send_driver_card(target_chat_id, d):
+        d_name = d.get('full_name', '')
+        d_id = d.get('account_id') or 'HP-100000'
+        d_phone = d.get('phone', '')
+        d_plate = d.get('truck_plate', '')
+        d_pass = d.get('password', '')
+
+        card = (
+            f"👤 <b>I.F:</b> {safe_html(d_name)}\n"
+            f"🆔 <b>Maxsus ID:</b> <code>{safe_html(d_id)}</code>\n"
+            f"📱 <b>Telefon (Login):</b> <code>{safe_html(d_phone)}</code>\n"
+            f"🚛 <b>Mashina raqami:</b> <code>{safe_html(d_plate)}</code>\n"
+            f"🔑 <b>Kirish paroli:</b> <code>{safe_html(d_pass)}</code>"
+        )
+        inline_kb = {
+            "inline_keyboard": [
+                [
+                    {"text": "✏️ Tahrirlash", "callback_data": f"edtdrv_{d_phone}"},
+                    {"text": "❌ O‘chirish", "callback_data": f"deldriver_{d_phone}"}
+                ]
+            ]
+        }
+        send_message(target_chat_id, card, reply_markup=inline_kb, parse_mode="HTML")
 
     # /start komandasi
     if text.startswith("/start"):
@@ -4093,18 +4078,45 @@ def handle_callback(cb):
     msg_id = msg.get("message_id")
 
     answer_callback(cb_id)
+    if data == "cancel_admin_login":
+        subs = load_subscribers()
+        subs.setdefault(str(chat_id), {}).pop("admin_login_pending", None)
+        save_subscribers(subs)
+        send_message(chat_id, "Asosiy fuqaro menyusiga qaytdingiz.", reply_markup=get_main_keyboard(chat_id))
+        return
 
     # --- AHOLI VA EXCEL CALLBACKLARI ---
     if data == "admin_search_user":
         subs = load_subscribers()
         subs.setdefault(str(chat_id), {})["admin_state"] = "awaiting_user_search_choice"
         save_subscribers(subs)
+        search_kb = {
+            "inline_keyboard": [
+                [{"text": "🆔 ID orqali qidirish", "callback_data": "search_user_by_id"}],
+                [{"text": "📱 Telefon raqam orqali qidirish", "callback_data": "search_user_by_phone"}],
+                [{"text": "⬅️ Admin menyusiga qaytish", "callback_data": "admin_back_menu"}]
+            ]
+        }
         send_message(
             chat_id,
             "🔍 <b>AHOLINI QIDIRISH:</b>\n\nQidirish usulini tanlang 👇",
             reply_markup=get_user_search_choice_keyboard(),
             parse_mode="HTML"
         )
+        return
+
+    if data == "search_user_by_id":
+        subs = load_subscribers()
+        subs.setdefault(str(chat_id), {})["admin_state"] = "awaiting_search_user_id"
+        save_subscribers(subs)
+        send_message(chat_id, "🆔 Fuqaroning <b>Maxsus ID-sini</b> kiriting:\n<i>(Masalan: XP-123456 yoki 123456)</i>", parse_mode="HTML")
+        return
+
+    if data == "search_user_by_phone":
+        subs = load_subscribers()
+        subs.setdefault(str(chat_id), {})["admin_state"] = "awaiting_search_user_phone"
+        save_subscribers(subs)
+        send_message(chat_id, "📱 Fuqaroning <b>Telefon raqamini</b> kiriting:\n<i>(Masalan: +998912345678 yoki 912345678)</i>", parse_mode="HTML")
         return
 
     if data == "del_user:" or data.startswith("del_user:"):
@@ -4133,7 +4145,7 @@ def handle_callback(cb):
             send_message(chat_id, f"❌ Xatolik yuz berdi: {safe_html(str(e))}")
         return
 
-    if data in ["admin_users_excel", "admin_back"]:
+    if data == "admin_users_excel":
         kb = {
             "inline_keyboard": [
                 [{"text": "🇺🇿 Butun O‘zbekiston", "callback_data": "exp_u_all"}],
@@ -4151,7 +4163,12 @@ def handle_callback(cb):
         )
         return
 
-    if data == "admin_back_menu":
+    if data in ["admin_back_menu", "admin_back"]:
+        subs = load_subscribers()
+        u_sub = subs.setdefault(str(chat_id), {})
+        u_sub.pop("admin_state", None)
+        u_sub["is_admin_active"] = True
+        save_subscribers(subs)
         admin_menu_text = (
             "👑 <b>XONADON+ BOSHQARUV PANELI (BOSH ADMIN)</b>\n\n"
             "Xush kelibsiz, Administrator! Ushbu bo‘lim faqat sizga ko‘rinadi.\n"
@@ -4176,6 +4193,7 @@ def handle_callback(cb):
         send_message(chat_id, "👑 <b>Admin boshqaruv paneli:</b>", reply_markup=get_admin_reply_keyboard(), parse_mode="HTML")
         send_message(chat_id, admin_menu_text, reply_markup=inline_admin_kb, parse_mode="HTML")
         return
+
 
     if data == "exp_u_all":
         send_message(chat_id, "⏳ <i>O‘zbekiston bo‘yicha to‘liq Excel fayli shakllantirilmoqda, iltimos kuting...</i>", parse_mode="HTML")
@@ -4392,17 +4410,7 @@ def handle_callback(cb):
         send_message(chat_id, "Asosiy menyuga qaytdingiz.", reply_markup=get_main_keyboard(chat_id))
         return
 
-    if data == "admin_back_menu":
-        inline_admin_kb = {
-            "inline_keyboard": [
-                [{"text": "🔍 Haydovchini qidirish", "callback_data": "admin_search_driver"}],
-                [{"text": "➕ Yangi haydovchi qo‘shish", "callback_data": "admin_add_driver"}],
-                [{"text": "📋 Haydovchilar ro‘yxati", "callback_data": "admin_list_drivers"}, {"text": "👥 Fuqarolar statistikasi", "callback_data": "admin_users_stat"}],
-                [{"text": "🚪 Admin rejimidan chiqish", "callback_data": "admin_exit"}]
-            ]
-        }
-        send_message(chat_id, "👑 <b>Admin boshqaruv paneli:</b>", reply_markup=inline_admin_kb, parse_mode="HTML")
-        return
+
 
     # --- HAYDOVCHI TAHRIRLASH CALLBACKLARI ---
     if data.startswith("edtdrv_"):
@@ -6400,7 +6408,8 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                         district=dist,
                         mfy=mfy,
                         street=street,
-                        house_number=data.get("house", "")
+                        house_number=data.get("house", ""),
+                        account_id=data.get("account_id")
                     )
                 except Exception as _db_addr_err:
                     print("[DB UPDATE USER ADDR ERROR]:", _db_addr_err)

@@ -231,51 +231,68 @@ def register_user(phone, full_name, role='resident', region='qashqadaryo', distr
         }
     }
 
-def update_user_address(phone, region, district, mfy, street, house_number=""):
+def update_user_address(phone, region, district, mfy, street, house_number="", account_id=None):
     conn = get_connection()
     c = conn.cursor()
-    clean_p = re.sub(r'\D', '', str(phone or ''))
-    last9 = clean_p[-9:] if len(clean_p) >= 9 else clean_p
-    c.execute("""
-        UPDATE users
-        SET region = COALESCE(NULLIF(?, ''), region),
-            district = COALESCE(NULLIF(?, ''), district),
-            mfy = COALESCE(NULLIF(?, ''), mfy),
-            street = COALESCE(NULLIF(?, ''), street),
-            house_number = COALESCE(NULLIF(?, ''), house_number)
-        WHERE phone LIKE ?
-    """, (region, district, mfy, street, house_number, f"%{last9}%"))
-    if c.rowcount == 0 and len(last9) >= 9:
-        acc_id = generate_unique_account_id("XP-")
-        full_phone = f"+998{last9}"
+    target_id = None
+
+    # 1. Search by account_id first if provided
+    if account_id:
+        c.execute("SELECT id FROM users WHERE account_id = ?", (account_id.strip(),))
+        r = c.fetchone()
+        if r:
+            target_id = r["id"]
+
+    # 2. Search by phone digits if not found by account_id
+    if not target_id and phone:
+        clean_p = re.sub(r'\D', '', str(phone or ''))
+        last9 = clean_p[-9:] if len(clean_p) >= 9 else clean_p
+        if last9:
+            c.execute("SELECT id, phone FROM users WHERE role = 'resident'")
+            for r in c.fetchall():
+                r_digits = re.sub(r'\D', '', str(r["phone"] or ''))
+                if r_digits.endswith(last9) or last9 in r_digits:
+                    target_id = r["id"]
+                    break
+
+    # 3. Update existing user (NEVER CREATE DUPLICATE USER ON ADDRESS CHANGE)
+    if target_id:
         c.execute("""
-            INSERT INTO users (phone, full_name, role, region, district, mfy, street, house_number, account_id)
-            VALUES (?, 'Aholi', 'resident', ?, ?, ?, ?, ?, ?)
-        """, (full_phone, region, district, mfy, street, house_number, acc_id))
-    conn.commit()
+            UPDATE users
+            SET region = COALESCE(NULLIF(?, ''), region),
+                district = COALESCE(NULLIF(?, ''), district),
+                mfy = COALESCE(NULLIF(?, ''), mfy),
+                street = COALESCE(NULLIF(?, ''), street),
+                house_number = COALESCE(NULLIF(?, ''), house_number)
+            WHERE id = ?
+        """, (region, district, mfy, street, house_number, target_id))
+        conn.commit()
+
     conn.close()
     return True
 
 def get_user_by_phone(phone):
+    clean_p = re.sub(r'\D', '', str(phone or ''))
+    last9 = clean_p[-9:] if len(clean_p) >= 9 else clean_p
+    if not last9:
+        return None
     conn = get_connection()
     c = conn.cursor()
-    c.execute("SELECT * FROM users WHERE phone = ?", (phone.strip(),))
-    row = c.fetchone()
-    if not row:
-        clean_p = re.sub(r'\D', '', phone)
-        c.execute("SELECT * FROM users WHERE phone LIKE ?", (f"%{clean_p[-9:]}%",))
-        row = c.fetchone()
-    if not row:
-        conn.close()
-        return None
-    user_dict = dict(row)
-    if not user_dict.get("account_id"):
-        acc_id = generate_unique_account_id("XP-")
-        c.execute("UPDATE users SET account_id = ? WHERE id = ?", (acc_id, user_dict["id"]))
-        conn.commit()
-        user_dict["account_id"] = acc_id
+    c.execute("SELECT * FROM users WHERE role = 'resident'")
+    rows = c.fetchall()
+    for row in rows:
+        u_dict = dict(row)
+        u_digits = re.sub(r'\D', '', str(u_dict.get('phone', '')))
+        if u_digits.endswith(last9) or last9 in u_digits:
+            if not u_dict.get("account_id"):
+                acc_id = generate_unique_account_id("XP-")
+                c.execute("UPDATE users SET account_id = ? WHERE id = ?", (acc_id, u_dict["id"]))
+                conn.commit()
+                u_dict["account_id"] = acc_id
+            conn.close()
+            return u_dict
     conn.close()
-    return user_dict
+    return None
 
 def get_user_by_account_id(account_id):
     conn = get_connection()
