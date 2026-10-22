@@ -5197,94 +5197,131 @@ class AlertApiHandler(BaseHTTPRequestHandler):
 
         if self.path.startswith("/api/active-trucks") or self.path.startswith("/api/get-active-trucks"):
             try:
+                # 1. Clean up stale drivers older than 10 minutes (600 seconds) or status == 'waiting'
+                now_ts = time.time()
+                active_drivers_db = {dict(d).get("account_id"): dict(d) for d in db_manager.get_all_drivers()}
+                active_phones_last9 = {re.sub(r'\D', '', dict(d).get("phone", ""))[-9:]: dict(d) for d in db_manager.get_all_drivers()}
+
+                # Evict from active_driver_states any ghost/non-existent or timed-out drivers
+                for cp in list(active_driver_states.keys()):
+                    ds = active_driver_states[cp]
+                    acc_id = ds.get("account_id") or ""
+                    raw_p = re.sub(r'\D', '', str(ds.get("phone", "") or ds.get("account_phone", "")))[-9:]
+                    
+                    # If driver no longer in drivers table: delete immediately
+                    matched_db_d = active_drivers_db.get(acc_id) or active_phones_last9.get(raw_p)
+                    if not matched_db_d:
+                        active_driver_states.pop(cp, None)
+                        continue
+
+                    # If 10 minutes passed without telemetry: automatically transition to waiting
+                    last_upd = ds.get("updated_at") or 0
+                    if (now_ts - last_upd) > 600:
+                        ds["status"] = "waiting"
+                        active_driver_states.pop(cp, None)
+                        continue
+
+                    # Sync latest DB credentials into active_driver_states
+                    ds["account_id"] = matched_db_d.get("account_id", acc_id)
+                    ds["driver_name"] = matched_db_d.get("full_name", ds.get("driver_name"))
+                    ds["truck_plate"] = matched_db_d.get("truck_plate", ds.get("truck_plate"))
+                    ds["truck_model"] = matched_db_d.get("truck_model", ds.get("truck_model"))
+                    ds["truck_color"] = matched_db_d.get("truck_color", ds.get("truck_color"))
+                    ds["phone"] = matched_db_d.get("phone", ds.get("phone"))
+
                 try:
                     db_trucks = db_manager.get_active_trucks()
                 except Exception as _dbe:
                     db_trucks = []
 
                 response_trucks = []
-                seen_plates = set()
+                seen_accounts = set()
 
-                # 1. Add all live drivers currently in active_driver_states (real-time telemetry)
+                # 1. Add from active_driver_states (real-time telemetry)
                 for cp, ds in list(active_driver_states.items()):
-                    if ds.get("is_active", 1) == 0:
+                    if ds.get("status") == "waiting":
                         continue
-
                     d_lat = ds.get("lat")
                     d_lng = ds.get("lng")
                     if d_lat is None or d_lng is None or d_lat == 0 or d_lng == 0:
                         continue
 
+                    acc_id = ds.get("account_id") or f"drv_{re.sub(r'\D', '', str(ds.get('phone','')))[-7:]}"
+                    if acc_id in seen_accounts:
+                        continue
+
                     raw_phone = str(ds.get("phone", "") or ds.get("account_phone", ""))
                     t_plate = str(ds.get("truck_plate", "")).strip()
-                    if not t_plate and raw_phone:
-                        db_d = db_manager.get_driver_by_phone(raw_phone)
-                        if db_d and db_d.get("truck_plate"):
-                            t_plate = str(db_d.get("truck_plate", "")).strip()
-                            ds["truck_plate"] = t_plate
+                    t_model = str(ds.get("truck_model", "Isuzu")).strip()
+                    t_color = str(ds.get("truck_color", "Oq")).strip()
+                    av_u = ds.get("avatar_url") or ""
+                    if av_u.startswith("/"):
+                        av_u = "https://xonadon-plus-server.onrender.com" + av_u
 
-                    pl_clean = re.sub(r'\s+', '', t_plate).upper() if t_plate else re.sub(r'\D', '', raw_phone)
-                    if pl_clean not in seen_plates:
-                        clean_phone_id = re.sub(r'\D', '', raw_phone)[-7:] or "truck"
-                        av_u = ds.get("avatar_url") or ""
-                        if av_u.startswith("/"):
-                            av_u = "https://xonadon-plus-server.onrender.com" + av_u
-                        response_trucks.append({
-                            "id": f"drv_{clean_phone_id}",
-                            "name": ds.get("driver_name") or "Haydovchi",
-                            "phone": raw_phone,
-                            "model": ds.get("truck_model", "Isuzu NPR 75"),
-                            "plate": t_plate,
-                            "truck_plate": t_plate,
-                            "color": ds.get("truck_color", "Oq (Sariq chiziqli)"),
-                            "status": ds.get("status", "arrived"),
-                            "stage": ds.get("stage", "collect"),
-                            "street": ds.get("street", "istiqlol"),
-                            "street_name": ds.get("street_name", "Istiqlol ko‘chasi"),
-                            "mfy": ds.get("mfy", "koksoy"),
-                            "district": ds.get("district", "nishon"),
-                            "region": ds.get("region", "qashqadaryo"),
-                            "lat": float(d_lat),
-                            "lng": float(d_lng),
-                            "avatar_url": av_u
-                        })
-                        seen_plates.add(pl_clean)
+                    response_trucks.append({
+                        "id": acc_id,
+                        "account_id": acc_id,
+                        "name": ds.get("driver_name") or "Haydovchi",
+                        "phone": raw_phone,
+                        "model": t_model,
+                        "plate": t_plate,
+                        "truck_plate": t_plate,
+                        "color": t_color,
+                        "status": ds.get("status", "arrived"),
+                        "stage": ds.get("stage", "collect"),
+                        "street": ds.get("street", "istiqlol"),
+                        "street_name": ds.get("street_name", "Istiqlol ko‘chasi"),
+                        "mfy": ds.get("mfy", "koksoy"),
+                        "district": ds.get("district", "nishon"),
+                        "region": ds.get("region", "qashqadaryo"),
+                        "lat": float(d_lat),
+                        "lng": float(d_lng),
+                        "avatar_url": av_u
+                    })
+                    seen_accounts.add(acc_id)
 
-                # 2. Add from db_trucks (all registered drivers in database)
+                # 2. Add from db_trucks (database query)
                 for dt in db_trucks:
+                    if dt.get("status") == "waiting":
+                        continue
                     dt_lat = dt.get("lat")
                     dt_lng = dt.get("lng")
                     if dt_lat is None or dt_lng is None or dt_lat == 0 or dt_lng == 0:
                         continue
 
+                    dt_acc = dt.get("account_id") or f"drv_{re.sub(r'\D', '', str(dt.get('phone','')))[-7:]}"
+                    if dt_acc in seen_accounts:
+                        continue
+
                     dt_plate = str(dt.get("truck_plate", "")).strip()
+                    dt_model = str(dt.get("truck_model", "Isuzu")).strip()
+                    dt_color = str(dt.get("truck_color", "Oq")).strip()
                     dt_phone = str(dt.get("phone", ""))
-                    pl_clean = re.sub(r'\s+', '', dt_plate).upper() if dt_plate else re.sub(r'\D', '', dt_phone)
-                    if pl_clean not in seen_plates:
-                        dt_phone_clean = re.sub(r'\D', '', dt_phone)[-7:] or "truck"
-                        dt_av = dt.get("avatar_url") or ""
-                        if dt_av.startswith("/"):
-                            dt_av = "https://xonadon-plus-server.onrender.com" + dt_av
-                        response_trucks.append({
-                            "id": f"drv_{dt_phone_clean}",
-                            "name": dt.get("full_name") or dt.get("driver_name", "Haydovchi"),
-                            "phone": dt_phone,
-                            "model": dt.get("truck_model", "Isuzu NPR 75"),
-                            "plate": dt_plate,
-                            "truck_plate": dt_plate,
-                            "color": dt.get("truck_color", "Oq"),
-                            "status": dt.get("status", "arrived"),
-                            "stage": dt.get("stage", "collect"),
-                            "street": dt.get("street", "istiqlol"),
-                            "street_name": dt.get("street_name", "Istiqlol ko‘chasi"),
-                            "mfy": dt.get("live_mfy") or dt.get("assigned_mfy", "koksoy"),
-                            "district": dt.get("live_dist") or dt.get("assigned_district", "nishon"),
-                            "region": dt.get("live_reg") or dt.get("assigned_region", "qashqadaryo"),
-                            "lat": float(dt_lat),
-                            "lng": float(dt_lng),
-                            "avatar_url": dt_av
-                        })
-                        seen_plates.add(pl_clean)
+                    dt_av = dt.get("avatar_url") or ""
+                    if dt_av.startswith("/"):
+                        dt_av = "https://xonadon-plus-server.onrender.com" + dt_av
+
+                    response_trucks.append({
+                        "id": dt_acc,
+                        "account_id": dt_acc,
+                        "name": dt.get("full_name") or dt.get("driver_name", "Haydovchi"),
+                        "phone": dt_phone,
+                        "model": dt_model,
+                        "plate": dt_plate,
+                        "truck_plate": dt_plate,
+                        "color": dt_color,
+                        "status": dt.get("status", "arrived"),
+                        "stage": dt.get("stage", "collect"),
+                        "street": dt.get("street", "istiqlol"),
+                        "street_name": dt.get("street_name", "Istiqlol ko‘chasi"),
+                        "mfy": dt.get("live_mfy") or dt.get("assigned_mfy", "koksoy"),
+                        "district": dt.get("live_dist") or dt.get("assigned_district", "nishon"),
+                        "region": dt.get("live_reg") or dt.get("assigned_region", "qashqadaryo"),
+                        "lat": float(dt_lat),
+                        "lng": float(dt_lng),
+                        "avatar_url": dt_av
+                    })
+                    seen_accounts.add(dt_acc)
 
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -5532,7 +5569,15 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
-                self.wfile.write(json.dumps({"ok": True}).encode("utf-8"))
+                self.wfile.write(json.dumps({
+                    "ok": True,
+                    "phone": db_driver.get("phone", phone),
+                    "full_name": db_driver.get("full_name", drv_n),
+                    "truck_plate": db_driver.get("truck_plate", t_plate),
+                    "truck_model": db_driver.get("truck_model", t_model),
+                    "truck_color": db_driver.get("truck_color", t_color),
+                    "account_id": db_driver.get("account_id", account_id)
+                }).encode("utf-8"))
                 return
             except Exception as e:
                 self.send_response(500)
@@ -5556,7 +5601,15 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
-                self.wfile.write(json.dumps({"ok": True}).encode("utf-8"))
+                self.wfile.write(json.dumps({
+                    "ok": True,
+                    "phone": db_driver.get("phone", phone),
+                    "full_name": db_driver.get("full_name", drv_n),
+                    "truck_plate": db_driver.get("truck_plate", t_plate),
+                    "truck_model": db_driver.get("truck_model", t_model),
+                    "truck_color": db_driver.get("truck_color", t_color),
+                    "account_id": db_driver.get("account_id", account_id)
+                }).encode("utf-8"))
                 return
             except Exception as e:
                 self.send_response(500)
@@ -6259,7 +6312,15 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
-                self.wfile.write(json.dumps({"ok": True}).encode("utf-8"))
+                self.wfile.write(json.dumps({
+                    "ok": True,
+                    "phone": db_driver.get("phone", phone),
+                    "full_name": db_driver.get("full_name", drv_n),
+                    "truck_plate": db_driver.get("truck_plate", t_plate),
+                    "truck_model": db_driver.get("truck_model", t_model),
+                    "truck_color": db_driver.get("truck_color", t_color),
+                    "account_id": db_driver.get("account_id", account_id)
+                }).encode("utf-8"))
             except Exception as e:
                 self.send_response(500)
                 self.send_header("Content-Type", "application/json")
@@ -6282,7 +6343,15 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
-                self.wfile.write(json.dumps({"ok": True}).encode("utf-8"))
+                self.wfile.write(json.dumps({
+                    "ok": True,
+                    "phone": db_driver.get("phone", phone),
+                    "full_name": db_driver.get("full_name", drv_n),
+                    "truck_plate": db_driver.get("truck_plate", t_plate),
+                    "truck_model": db_driver.get("truck_model", t_model),
+                    "truck_color": db_driver.get("truck_color", t_color),
+                    "account_id": db_driver.get("account_id", account_id)
+                }).encode("utf-8"))
             except Exception as e:
                 self.send_response(500)
                 self.send_header("Content-Type", "application/json")
@@ -6499,15 +6568,21 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 length = int(self.headers.get("Content-Length", 0) or 0)
                 body = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
                 data = json.loads(body)
+                account_id = str(data.get("account_id") or "").strip()
                 phone = str(data.get("account_phone") or data.get("phone", "+998901234567")).strip()
                 contact_p = str(data.get("contact_phone") or data.get("driver_phone") or phone).strip()
                 clean_p = re.sub(r'\D', '', phone)[-9:] or "unknown"
                 clean_contact = re.sub(r'\D', '', contact_p)[-9:] or clean_p
 
-                # Check if driver exists in DB
-                db_driver = db_manager.get_driver_by_phone(phone) or db_manager.get_driver_by_phone(contact_p)
+                # Check if driver exists in DB: BY ACCOUNT_ID FIRST!
+                db_driver = None
+                if account_id:
+                    db_driver = db_manager.get_driver_by_account_id(account_id)
                 if not db_driver:
-                    # Driver was deleted from bot or not registered!
+                    db_driver = db_manager.get_driver_by_phone(phone) or db_manager.get_driver_by_phone(contact_p)
+
+                if not db_driver:
+                    # Driver was genuinely deleted by admin
                     active_driver_states.pop(clean_p, None)
                     active_driver_states.pop(clean_contact, None)
                     for k in list(active_driver_states.keys()):
@@ -6614,7 +6689,15 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
-                self.wfile.write(json.dumps({"ok": True}).encode("utf-8"))
+                self.wfile.write(json.dumps({
+                    "ok": True,
+                    "phone": db_driver.get("phone", phone),
+                    "full_name": db_driver.get("full_name", drv_n),
+                    "truck_plate": db_driver.get("truck_plate", t_plate),
+                    "truck_model": db_driver.get("truck_model", t_model),
+                    "truck_color": db_driver.get("truck_color", t_color),
+                    "account_id": db_driver.get("account_id", account_id)
+                }).encode("utf-8"))
             except Exception as e:
                 self.send_response(500)
                 self.send_header("Content-Type", "application/json")

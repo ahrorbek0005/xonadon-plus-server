@@ -1062,6 +1062,7 @@ def get_active_trucks(region=None, district=None, mfy=None):
     c = conn.cursor()
     c.execute("""
         SELECT d.phone, 
+               d.account_id,
                COALESCE(NULLIF(l.driver_name, ''), d.full_name) as full_name, 
                COALESCE(NULLIF(l.truck_model, ''), d.truck_model) as truck_model, 
                COALESCE(NULLIF(l.truck_plate, ''), d.truck_plate) as truck_plate, 
@@ -1069,7 +1070,7 @@ def get_active_trucks(region=None, district=None, mfy=None):
                d.assigned_region, d.assigned_district, d.assigned_mfy, d.avatar_url,
                l.lat,
                l.lng,
-               COALESCE(l.status, 'arrived') as status,
+               COALESCE(l.status, 'waiting') as status,
                COALESCE(l.stage, 'collect') as stage,
                COALESCE(l.street, 'istiqlol') as street,
                COALESCE(l.street_name, 'Istiqlol ko‘chasi') as street_name,
@@ -1078,8 +1079,11 @@ def get_active_trucks(region=None, district=None, mfy=None):
                COALESCE(l.region, d.assigned_region, 'qashqadaryo') as live_reg,
                l.updated_at
         FROM drivers d
-        LEFT JOIN driver_live l ON (d.phone = l.phone OR l.phone LIKE '%' || SUBSTR(REPLACE(REPLACE(d.phone, '+', ''), ' ', ''), -9))
-        WHERE d.is_active = 1
+        INNER JOIN driver_live l ON (d.phone = l.phone OR l.phone LIKE '%' || SUBSTR(REPLACE(REPLACE(d.phone, '+', ''), ' ', ''), -9))
+        WHERE d.is_active = 1 
+          AND l.status != 'waiting'
+          AND l.lat IS NOT NULL AND l.lat != 0
+          AND (strftime('%s', 'now') - strftime('%s', l.updated_at)) <= 600
         ORDER BY d.id DESC
     """)
     rows = c.fetchall()
