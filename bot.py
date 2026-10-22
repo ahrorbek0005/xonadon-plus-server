@@ -3131,24 +3131,17 @@ def handle_message(msg):
                 send_message(chat_id, warn_already, reply_markup=get_main_keyboard(chat_id), parse_mode="HTML")
                 return
 
-            user_sub["status"] = "awaiting_address"
-            try:
-                u_reg = db_manager.register_user(formatted, user_info.get("first_name", "Aholi"), role='resident')
-                acc_id = u_reg.get("user", {}).get("account_id") if u_reg else None
-                if acc_id:
-                    user_sub["account_id"] = acc_id
-            except Exception as e:
-                logger.error(f"Error registering user in db on contact: {e}")
+            user_sub["status"] = "awaiting_resident_name"
             save_subscribers(subs)
 
             conf_text = (
                 f"🎉 <b>TABRIKLAYMIZ! TELEFONINGIZ TASDIQLANDI!</b>\n\n"
                 f"📱 <b>Telefon raqam:</b> <code>{formatted}</code> ✅\n"
                 f"🛡️ <b>Tasdiqlash usuli:</b> Telegram rasmiy kontakti\n\n"
-                f"📍 <b>Endi yashash manzilingizni tanlang:</b>\n"
-                f"<i>Tizimda xatoliklar bo‘lmasligi uchun viloyat, tuman, mahalla va ko‘changizni pastdagi tugmalar orqali ketma-ket tanlang:</i>"
+                f"👤 Iltimos, <b>Ism va familiyangizni</b> kiriting:\n"
+                f"<i>(Masalan: Ahror Suyunov)</i>"
             )
-            send_message(chat_id, conf_text, reply_markup=get_region_keyboard(), parse_mode="HTML")
+            send_message(chat_id, conf_text, parse_mode="HTML")
             return
         elif digits:
             # Agar boshqa odamning kontakti uzatilgan bo'lsa -> SMS kod talab qilinadi
@@ -3489,7 +3482,7 @@ def handle_message(msg):
             dist_n = ADDRESS_DB.get(reg_k, {}).get("districts", {}).get(dist_k, {}).get("name", dist_k)
             mfy_n = ADDRESS_DB.get(reg_k, {}).get("districts", {}).get(dist_k, {}).get("mfys", {}).get(mfy_k, {}).get("name", mfy_k)
             st_n = ADDRESS_DB.get(reg_k, {}).get("districts", {}).get(dist_k, {}).get("mfys", {}).get(mfy_k, {}).get("streets", {}).get(st_k, st_k)
-            full_addr = f"{reg_n}, {dist_n}, {mfy_n} MFY, {st_n}"
+            full_addr = f"{reg_n}, {dist_n}, {mfy_n}, {st_n}"
 
             info_text = (
                 "👤 <b>FUQARO MA’LUMOTLARI</b>\n\n"
@@ -3542,7 +3535,7 @@ def handle_message(msg):
             dist_n = ADDRESS_DB.get(reg_k, {}).get("districts", {}).get(dist_k, {}).get("name", dist_k)
             mfy_n = ADDRESS_DB.get(reg_k, {}).get("districts", {}).get(dist_k, {}).get("mfys", {}).get(mfy_k, {}).get("name", mfy_k)
             st_n = ADDRESS_DB.get(reg_k, {}).get("districts", {}).get(dist_k, {}).get("mfys", {}).get(mfy_k, {}).get("streets", {}).get(st_k, st_k)
-            full_addr = f"{reg_n}, {dist_n}, {mfy_n} MFY, {st_n}"
+            full_addr = f"{reg_n}, {dist_n}, {mfy_n}, {st_n}"
 
             info_text = (
                 "👤 <b>FUQARO MA’LUMOTLARI</b>\n\n"
@@ -3570,7 +3563,7 @@ def handle_message(msg):
             if any(char.isdigit() for char in d_name) or len(d_name) < 3:
                 send_message(
                     chat_id,
-                    "⚠️ <b>Iltimos, faqat harflar qatnashgan ismingizni to‘g‘ri kiriting!</b>\n<i>(Masalan: Ahror Suyunov)</i>",
+                    "⚠️ <b>Iltimos, to‘g‘ri ism va familiyangizni kiriting!</b>\n<i>(Masalan: Ahror Suyunov)</i>",
                     parse_mode="HTML"
                 )
                 return
@@ -3743,7 +3736,7 @@ def handle_message(msg):
                 if any(char.isdigit() for char in new_val) or len(new_val) < 3:
                     send_message(
                         chat_id,
-                        "⚠️ <b>Iltimos, faqat harflar qatnashgan ismingizni to‘g‘ri kiriting!</b>\n<i>(Masalan: Ahror Suyunov)</i>",
+                        "⚠️ <b>Iltimos, to‘g‘ri ism va familiyangizni kiriting!</b>\n<i>(Masalan: Ahror Suyunov)</i>",
                         parse_mode="HTML"
                     )
                     return
@@ -3788,7 +3781,7 @@ def handle_message(msg):
                 new_val = clean_plate
 
             field_labels = {
-                "full_name": "👤 I.F (Ism Familiya)",
+                "full_name": "👤 Ism va familiya",
                 "phone": "📱 Telefon raqami (Login)",
                 "truck_plate": "🚛 Mashina raqami",
                 "password": "🔑 Kirish paroli"
@@ -3962,29 +3955,43 @@ def handle_message(msg):
             user_sub["phone"] = verified_phone
             user_sub["raw_phone"] = verified_raw
             user_sub["phone_verified"] = True
-            user_sub["status"] = "verified"
-            user_sub["phone_verified_at"] = get_uzb_time_str("%Y-%m-%d %H:%M:%S")
-            user_sub.pop("pending_otp", None)
-            try:
-                u_reg = db_manager.register_user(verified_phone, user_info.get("first_name", "Aholi"), role='resident')
-                acc_id = u_reg.get("user", {}).get("account_id") if u_reg else None
-                if acc_id:
-                    user_sub["account_id"] = acc_id
-            except Exception as e:
-                logger.error(f"Error registering user in db on otp: {e}")
-            save_subscribers(subs)
-
-            conf_text = (
-                f"🎉 <b>TABRIKLAYMIZ! SMS KOD TASDIQLANDI!</b>\n\n"
-                f"📱 <b>Tasdiqlangan telefon:</b> <code>{verified_phone}</code> ✅\n"
-                f"🛡️ <b>Xavfsizlik:</b> SMS orqali to‘liq identifikatsiya qilindi\n"
-                f"🔗 <b>Xonadon+ hisobi bilan bog‘landi:</b> Ha (Faol ✅)\n\n"
-                f"📍 <b>Biriktirilgan manzil:</b>\n<i>{safe_html(user_sub['address']['street_label'])}</i>\n\n"
-                f"🔔 Endi Isuzu gaz mashinasi ko‘changizga kirishi bilan sizga Telegram orqali avtomatik bildirishnoma yetib keladi.\n\n"
-                f"Quyidagi menyudan foydalanishingiz mumkin 👇"
-            )
-            send_message(chat_id, conf_text, reply_markup=get_main_keyboard(chat_id), parse_mode="HTML")
-            return
+            existing_user = db_manager.get_user_by_phone(verified_phone)
+            if existing_user and existing_user.get("account_id") and existing_user.get("account_id").startswith("XP-"):
+                user_sub["account_id"] = existing_user["account_id"]
+                user_sub["full_name"] = existing_user.get("full_name", "")
+                user_sub["status"] = "verified"
+                if existing_user.get("region") and existing_user.get("district") and existing_user.get("mfy") and existing_user.get("street"):
+                    reg_k = existing_user["region"]
+                    dist_k = existing_user["district"]
+                    mfy_k = existing_user["mfy"]
+                    st_k = existing_user["street"]
+                    reg_n = ADDRESS_DB.get(reg_k, {}).get("name", reg_k)
+                    dist_n = ADDRESS_DB.get(reg_k, {}).get("districts", {}).get(dist_k, {}).get("name", dist_k)
+                    mfy_n = ADDRESS_DB.get(reg_k, {}).get("districts", {}).get(dist_k, {}).get("mfys", {}).get(mfy_k, {}).get("name", mfy_k)
+                    st_n = ADDRESS_DB.get(reg_k, {}).get("districts", {}).get(dist_k, {}).get("mfys", {}).get(mfy_k, {}).get("streets", {}).get(st_k, st_k)
+                    full_addr = f"{reg_n}, {dist_n}, {mfy_n}, {st_n}"
+                    user_sub["address"] = {"region": reg_k, "district": dist_k, "mfy": mfy_k, "street": st_k, "street_label": full_addr}
+                    user_sub["address_text"] = full_addr
+                save_subscribers(subs)
+                conf_text = (
+                    f"🎉 <b>TABRIKLAYMIZ! SMS KOD TASDIQLANDI!</b>\n\n"
+                    f"📱 <b>Tasdiqlangan telefon:</b> <code>{verified_phone}</code> ✅\n"
+                    f"🆔 <b>Maxsus ID-ingiz:</b> <code>{existing_user['account_id']}</code>\n\n"
+                    f"Quyidagi menyudan foydalanishingiz mumkin 👇"
+                )
+                send_message(chat_id, conf_text, reply_markup=get_main_keyboard(chat_id), parse_mode="HTML")
+                return
+            else:
+                user_sub["status"] = "awaiting_resident_name"
+                save_subscribers(subs)
+                conf_text = (
+                    f"🎉 <b>TABRIKLAYMIZ! SMS KOD TASDIQLANDI!</b>\n\n"
+                    f"📱 <b>Tasdiqlangan telefon:</b> <code>{verified_phone}</code> ✅\n\n"
+                    f"👤 Iltimos, <b>Ism va familiyangizni</b> kiriting:\n"
+                    f"<i>(Masalan: Ahror Suyunov)</i>"
+                )
+                send_message(chat_id, conf_text, parse_mode="HTML")
+                return
         else:
             send_message(
                 chat_id,
@@ -4053,12 +4060,50 @@ def handle_message(msg):
             send_message(chat_id, prompt_text, reply_markup=get_contact_keyboard(), parse_mode="HTML")
             return
 
+    # 3.5. FUQARO ISM VA FAMILIYASINI KIRITISH BOSQICHI
+    if user_sub.get("status") == "awaiting_resident_name":
+        clean_name = text.strip()
+        if any(char.isdigit() for char in clean_name) or len(clean_name) < 3:
+            send_message(
+                chat_id,
+                "⚠️ <b>Iltimos, to‘g‘ri ism va familiyangizni kiriting!</b>",
+                parse_mode="HTML"
+            )
+            return
+
+        user_sub["full_name"] = clean_name
+        user_sub["first_name"] = clean_name
+        phone_to_reg = user_sub.get("phone") or user_sub.get("pending_phone") or user_sub.get("raw_phone")
+        acc_id = None
+        try:
+            u_reg = db_manager.register_user(phone_to_reg, clean_name, role='resident')
+            if u_reg and u_reg.get("user"):
+                acc_id = u_reg["user"].get("account_id")
+                db_manager.update_user_name(phone_to_reg, acc_id, clean_name)
+        except Exception as e:
+            logger.error(f"Error registering resident name: {e}")
+
+        if acc_id:
+            user_sub["account_id"] = acc_id
+
+        user_sub["status"] = "awaiting_address"
+        save_subscribers(subs)
+
+        conf_text = (
+            f"👤 <b>Ism va familiya:</b> <code>{safe_html(clean_name)}</code> ✅\n\n"
+            f"📍 <b>Endi yashash manzilingizni tanlang:</b>\n"
+            f"<i>Tizimda xatoliklar bo‘lmasligi uchun viloyat, tuman, mahalla va ko‘changizni pastdagi tugmalar orqali ketma-ket tanlang:</i>"
+        )
+        send_message(chat_id, conf_text, reply_markup=get_region_keyboard(), parse_mode="HTML")
+        return
+
     # 4. TASDIQLANGAN FOYDALANUVCHILAR UCHUN MENYU KOMANDALARI
 
     # Foydalanuvchi profili va telefon raqam (Har doim birinchi ishlaydi)
     if text == "👤 Profilim va Telefon raqam" or text == "/profil" or text == "/telefon":
         phone_val = safe_html(user_sub.get("phone") or user_sub.get("pending_phone") or "+998 (91) 234-56-78")
-        first_n = safe_html(user_sub.get("first_name", user_info.get("first_name", "Fuqaro")))
+        u_db_row = db_manager.get_user_by_phone(user_sub.get("phone", ""))
+        full_n = safe_html(user_sub.get("full_name") or (u_db_row and u_db_row.get("full_name")) or user_sub.get("first_name", "Fuqaro"))
         uname = user_sub.get("username", user_info.get("username", ""))
         uname_str = f"@{uname}" if uname else "Mavjud emas"
 
@@ -4075,7 +4120,7 @@ def handle_message(msg):
         acc_id = user_sub.get("account_id")
         if not acc_id:
             try:
-                u_row = db_manager.get_user_by_phone(user_sub.get("phone", ""))
+                u_row = u_db_row or db_manager.get_user_by_phone(user_sub.get("phone", ""))
                 if u_row and u_row.get("account_id"):
                     acc_id = u_row["account_id"]
                     user_sub["account_id"] = acc_id
@@ -4092,7 +4137,7 @@ def handle_message(msg):
             f"👤 <b>FOYDALANUVCHI SHAXSIY PROFILI</b>\n\n"
             f"📱 <b>Tasdiqlangan telefon:</b> <code>{phone_val}</code> ✅\n"
             f"🆔 <b>Maxsus ID:</b> <code>{acc_id}</code>\n"
-            f"👤 <b>Ism:</b> {first_n}\n"
+            f"👤 <b>Ism va familiya:</b> {full_n}\n"
             f"💬 <b>Telegram:</b> <code>{safe_html(uname_str)}</code>\n"
             f"🆔 <b>Telegram ID:</b> <code>{chat_id}</code>\n\n"
             f"📍 <b>Biriktirilgan rasmiy manzil:</b>\n{addr_val}\n\n"
@@ -4588,7 +4633,7 @@ def handle_callback(cb):
         )
         fields_kb = {
             "inline_keyboard": [
-                [{"text": "👤 I.F (Ism Familiya)", "callback_data": f"chfield_{phone_to_edit}_full_name"}],
+                [{"text": "👤 Ism va familiya", "callback_data": f"chfield_{phone_to_edit}_full_name"}],
                 [{"text": "📱 Telefon raqami", "callback_data": f"chfield_{phone_to_edit}_phone"}],
                 [{"text": "🚛 Mashina raqami", "callback_data": f"chfield_{phone_to_edit}_truck_plate"}],
                 [{"text": "🔑 Kirish paroli", "callback_data": f"chfield_{phone_to_edit}_password"}],
@@ -6264,6 +6309,50 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
             return
 
+        # 5.7 RESIDENT PROFILE UPDATE (Ism va familiya)
+        if self.path == "/api/user/update-name":
+            try:
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                body = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
+                data = json.loads(body)
+                phone = str(data.get("phone", "")).strip()
+                account_id = str(data.get("account_id", "")).strip()
+                full_name = str(data.get("full_name") or data.get("name", "")).strip()
+
+                if any(c.isdigit() for c in full_name) or len(full_name) < 3:
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"ok": False, "error": "invalid_name", "message": "To‘g‘ri ism va familiyangizni kiriting!"}).encode("utf-8"))
+                    return
+
+                db_manager.update_user_name(phone, account_id, full_name)
+
+                # Sync to bot subscribers
+                digits, _ = normalize_phone(phone)
+                subs = load_subscribers()
+                for cid, u_data in subs.items():
+                    u_raw = str(u_data.get("raw_phone", ""))
+                    u_phone = str(u_data.get("phone", ""))
+                    if (digits and digits[-9:] in u_raw) or (digits and digits[-9:] in u_phone) or (account_id and u_data.get("account_id") == account_id):
+                        u_data["full_name"] = full_name
+                        u_data["first_name"] = full_name
+                save_subscribers(subs)
+
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": True, "full_name": full_name}).encode("utf-8"))
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
+            return
+
 
         # 6. DRIVER LIVE LOCATION & TELEMETRY UPDATE (GPS & Multi-driver state)
         if self.path == "/api/driver/location" or self.path == "/api/driver/telemetry":
@@ -6791,7 +6880,7 @@ def generate_users_excel_csv(region=None, district=None, mfy=None, street=None):
     headers = [
         "№",
         "Maxsus ID",
-        "Fuqaroning F.I.SH",
+        "Fuqaroning ism-familiyasi",
         "Telefon raqami",
         "Viloyat",
         "Tuman",

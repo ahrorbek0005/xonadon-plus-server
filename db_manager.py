@@ -289,6 +289,41 @@ def update_user_address(phone, region, district, mfy, street, house_number="", a
     conn.close()
     return True
 
+def update_user_name(phone, account_id, full_name):
+    conn = get_connection()
+    c = conn.cursor()
+    target_id = None
+    clean_name = str(full_name or '').strip()
+    if not clean_name:
+        conn.close()
+        return False
+
+    # 1. Search by account_id first if provided
+    if account_id:
+        c.execute("SELECT id FROM users WHERE account_id = ?", (account_id.strip(),))
+        r = c.fetchone()
+        if r:
+            target_id = r["id"]
+
+    # 2. Search by phone digits if not found by account_id
+    if not target_id and phone:
+        clean_p = re.sub(r'\D', '', str(phone or ''))
+        last9 = clean_p[-9:] if len(clean_p) >= 9 else clean_p
+        if last9:
+            c.execute("SELECT id, phone FROM users")
+            for r in c.fetchall():
+                r_digits = re.sub(r'\D', '', str(r["phone"] or ''))
+                if r_digits.endswith(last9) or last9 in r_digits:
+                    target_id = r["id"]
+                    break
+
+    if target_id:
+        c.execute("UPDATE users SET full_name = ? WHERE id = ?", (clean_name, target_id))
+        conn.commit()
+
+    conn.close()
+    return True
+
 def get_user_by_phone(phone):
     clean_p = re.sub(r'\D', '', str(phone or ''))
     last9 = clean_p[-9:] if len(clean_p) >= 9 else clean_p
