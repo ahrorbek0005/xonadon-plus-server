@@ -7,11 +7,13 @@ ko'chalar bo'yicha aniq filtrlangan xabarnomalar xizmati.
 import json
 import os
 import sys
+import traceback
 import db_manager
 db_manager.init_db()
 import time
 import urllib.request
-                # urllib.parse is already imported at top
+import urllib.parse
+
 import threading
 import socket
 import re
@@ -2490,6 +2492,9 @@ def tg_request(method, payload=None):
 
 
 def send_document(chat_id, file_path, caption="", parse_mode="HTML"):
+    if not file_path or not os.path.exists(file_path):
+        print(f"Error in send_document: file_path invalid or does not exist: {file_path}")
+        return None
     try:
         boundary = "----WebKitFormBoundary" + str(int(time.time() * 1000))
         lines = []
@@ -2528,9 +2533,20 @@ def send_document(chat_id, file_path, caption="", parse_mode="HTML"):
         )
         with urllib.request.urlopen(req, timeout=30) as resp:
             return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as he:
+        err_body = he.read().decode(errors='replace')
+        print(f"HTTPError in send_document: {he.code} - {err_body}")
+        if ("entities" in err_body or "HTML" in err_body) and parse_mode:
+            try:
+                plain_caption = re.sub(r'<[^>]+>', '', caption)
+                return send_document(chat_id, file_path, caption=plain_caption, parse_mode=None)
+            except Exception:
+                pass
+        return None
     except Exception as e:
         print(f"Error in send_document: {e}")
         return None
+
 
 def send_message(chat_id, text, reply_markup=None, parse_mode="HTML"):
     payload = {
@@ -3546,13 +3562,33 @@ def handle_message(msg):
             send_message(chat_id, prompt, parse_mode="HTML")
             return
 
-        # 2-bosqich: Telefon kiritildi -> 9 ta raqam bo'lsa ham avtomatik +998 qo'shiladi!
+        # 2-bosqich: Telefon kiritildi -> oxirgi 9 ta raqam bo'yicha serverdan qidiramiz
         if user_sub.get("admin_state") == "awaiting_driver_phone":
-            norm_phone = normalize_uz_phone(text)
-            if not norm_phone:
+            digits = re.sub(r'\D', '', text)
+            last9 = digits[-9:] if len(digits) >= 9 else digits
+            if not last9 or len(digits) < 9:
                 send_message(
                     chat_id,
                     "⚠️ <b>Iltimos, telefon raqamini to‘g‘ri formatda kiriting!</b>\n"
+                    "<i>(Masalan: 991234567 yoki +998991234567)</i>",
+                    parse_mode="HTML"
+                )
+                return
+
+            norm_phone = "+998" + last9
+
+            # SERVERDA TEKSHIRAMIZ: Oxirgi 9 ta raqam bo'yicha bazada bormi?
+            existing_d = db_manager.get_driver_by_phone(last9) or db_manager.get_driver_by_phone(norm_phone)
+            if existing_d:
+                d_name = existing_d.get('full_name', 'Boshqa haydovchi')
+                d_id = existing_d.get('account_id', '')
+                d_ph = existing_d.get('phone', norm_phone)
+                send_message(
+                    chat_id,
+                    f"⚠️ <b>Ushbu telefon raqami allaqachon tizimda ro‘yxatdan o‘tgan!</b>\n\n"
+                    f"👤 <b>Haydovchi:</b> {safe_html(d_name)} (<code>{safe_html(d_id)}</code>)\n"
+                    f"📱 <b>Telefon:</b> <code>{safe_html(d_ph)}</code>\n\n"
+                    "Iltimos, boshqa telefon raqam kiriting:\n"
                     "<i>(Masalan: 991234567 yoki +998991234567)</i>",
                     parse_mode="HTML"
                 )
@@ -3570,20 +3606,36 @@ def handle_message(msg):
             send_message(chat_id, prompt, parse_mode="HTML")
             return
 
-        # 3-bosqich: Mashina raqami kiritildi -> O'zbekiston formati (01A123AA yoki 01123AAA)
+        # 3-bosqich: Mashina raqami kiritildi -> Davlat raqamini barcha belgilari aniq tekshiriladi
         if user_sub.get("admin_state") == "awaiting_driver_plate":
             raw_plate = text.strip().upper()
             clean_plate = re.sub(r'[^A-Z0-9]', '', raw_plate)
             # Faqat O'zbekiston davlat raqami formati:
-            # 1) Jismoniy shaxs: 2 raqam + 1 harf + 3 raqam + 2 harf (01A123AA yoki 70M260EB)
-            # 2) Yuridik shaxs: 2 raqam + 3 raqam + 3 harf (01123AAA yoki 70123AAA)
+            # 1) Jismoniy shaxs: 2 raqam + 1 harf + 3 raqam + 2 harf (01A123AA)
+            # 2) Yuridik shaxs: 2 raqam + 3 raqam + 3 harf (01123AAA)
             if not re.match(r'^\d{2}(?:[A-Z]\d{3}[A-Z]{2}|\d{3}[A-Z]{3})$', clean_plate):
                 send_message(
                     chat_id,
                     "⚠️ <b>Noto‘g‘ri davlat raqami formati!</b>\n\n"
                     "Iltimos, O‘zbekiston davlat raqamini to‘g‘ri kiriting:\n"
-                    "• Masalan (jismoniy shaxs): <b>01A123AA</b> yoki <b>70M260EB</b>\n"
+                    "• Masalan (jismoniy shaxs): <b>01A123AA</b>\n"
                     "• Masalan (yuridik shaxs): <b>01123AAA</b>",
+                    parse_mode="HTML"
+                )
+                return
+
+            # SERVERDA TEKSHIRAMIZ: Katta-kichik harflari ahamiyatsiz, aynan bir xil bo'lsa ogohlantirish!
+            existing_p = db_manager.get_driver_by_plate(clean_plate)
+            if existing_p:
+                d_name = existing_p.get('full_name', 'Boshqa haydovchi')
+                d_id = existing_p.get('account_id', '')
+                send_message(
+                    chat_id,
+                    f"⚠️ <b>Ushbu davlat raqami allaqachon tizimda ro‘yxatdan o‘tgan!</b>\n\n"
+                    f"🚛 <b>Mashina raqami:</b> <code>{safe_html(clean_plate)}</code>\n"
+                    f"👤 <b>Biriktirilgan haydovchi:</b> {safe_html(d_name)} (<code>{safe_html(d_id)}</code>)\n\n"
+                    "Iltimos, boshqa davlat raqam kiriting:\n"
+                    "<i>(Masalan: 01A123AA yoki 01123AAA)</i>",
                     parse_mode="HTML"
                 )
                 return
@@ -3613,10 +3665,14 @@ def handle_message(msg):
                 password=d_pass,
                 assigned_mfy="koksoy"
             )
-            d_id = res.get("account_id") if isinstance(res, dict) else ""
-            if not d_id:
-                d_obj = db_manager.get_driver_by_phone(d_phone)
-                d_id = d_obj.get("account_id", "") if d_obj else ""
+            if not res or not res.get("ok"):
+                err_msg = res.get("message", "Ushbu ma’lumotlar bilan haydovchi qo‘shib bo‘lmadi.") if isinstance(res, dict) else "Xatolik"
+                send_message(chat_id, f"⚠️ <b>{safe_html(err_msg)}</b>", reply_markup=get_admin_reply_keyboard(), parse_mode="HTML")
+                user_sub.pop("admin_state", None)
+                save_subscribers(subs)
+                return
+
+            d_id = res.get("account_id", "")
 
             # Clear in-memory active_driver_states so new driver starts strictly in WAITING mode
             clean_p = re.sub(r'\D', '', d_phone)[-9:]
@@ -3676,6 +3732,14 @@ def handle_message(msg):
                         parse_mode="HTML"
                     )
                     return
+                existing_d = db_manager.get_driver_by_phone(norm_p)
+                if existing_d and str(existing_d.get('phone')) != str(target_phone):
+                    send_message(
+                        chat_id,
+                        f"⚠️ <b>Ushbu telefon raqami boshqa haydovchiga ({existing_d.get('full_name')}) biriktirilgan!</b>\nIltimos, boshqa raqam kiriting:",
+                        parse_mode="HTML"
+                    )
+                    return
                 new_val = norm_p
             elif field == "truck_plate":
                 clean_plate = re.sub(r'[^A-Z0-9]', '', new_val.upper())
@@ -3684,8 +3748,16 @@ def handle_message(msg):
                         chat_id,
                         "⚠️ <b>Noto‘g‘ri davlat raqami formati!</b>\n\n"
                         "Iltimos, O‘zbekiston davlat raqamini to‘g‘ri kiriting:\n"
-                        "• Masalan: <b>01A123AA</b> yoki <b>70M260EB</b>\n"
-                        "• Masalan: <b>01123AAA</b>",
+                        "• Masalan (jismoniy shaxs): <b>01A123AA</b>\n"
+                        "• Masalan (yuridik shaxs): <b>01123AAA</b>",
+                        parse_mode="HTML"
+                    )
+                    return
+                existing_p = db_manager.get_driver_by_plate(clean_plate)
+                if existing_p and str(existing_p.get('phone')) != str(target_phone):
+                    send_message(
+                        chat_id,
+                        f"⚠️ <b>Ushbu davlat raqami boshqa haydovchiga ({existing_p.get('full_name')}) biriktirilgan!</b>\nIltimos, boshqa davlat raqamini kiriting:",
                         parse_mode="HTML"
                     )
                     return
@@ -4308,13 +4380,11 @@ def handle_callback(cb):
 
     if data.startswith("expreg:"):
         _, scope, reg_k = data.split(":")
+        reg_title = ADDRESS_DB[reg_k]['name']
         if scope == "region":
-            send_message(chat_id, f"⏳ <i>{ADDRESS_DB[reg_k]['name']} bo‘yicha fayl shakllantirilmoqda...</i>", parse_mode="HTML")
+            send_message(chat_id, f"⏳ <i>{reg_title} bo‘yicha fayl shakllantirilmoqda...</i>", parse_mode="HTML")
             fpath = generate_users_excel_csv(region=reg_k)
-            if not fpath:
-                send_message(chat_id, "ℹ️ Ushbu viloyatda hali fuqarolar mavjud emas.")
-                return
-            send_document(chat_id, fpath, caption=f"📊 <b>{ADDRESS_DB[reg_k]['name']} aholi ro‘yxati</b>")
+            send_document(chat_id, fpath, caption=f"📊 <b>{reg_title} aholi ro‘yxati (Excel fayl yuklandi ✅)</b>")
             try: os.remove(fpath)
             except: pass
             return
@@ -4337,12 +4407,9 @@ def handle_callback(cb):
         _, scope, reg_k, dist_k = data.split(":")
         dist_name = ADDRESS_DB[reg_k]["districts"][dist_k]["name"]
         if scope == "district":
-            send_message(chat_id, f"⏳ <i>{dist_name} tumani bo‘yicha fayl shakllantirilmoqda...</i>", parse_mode="HTML")
+            send_message(chat_id, f"⏳ <i>{dist_name} bo‘yicha fayl shakllantirilmoqda...</i>", parse_mode="HTML")
             fpath = generate_users_excel_csv(region=reg_k, district=dist_k)
-            if not fpath:
-                send_message(chat_id, "ℹ️ Ushbu tumanda hali fuqarolar mavjud emas.")
-                return
-            send_document(chat_id, fpath, caption=f"📊 <b>{dist_name} tumani aholi ro‘yxati</b>")
+            send_document(chat_id, fpath, caption=f"📊 <b>{dist_name} aholi ro‘yxati (Excel fayl yuklandi ✅)</b>")
             try: os.remove(fpath)
             except: pass
             return
@@ -4358,19 +4425,17 @@ def handle_callback(cb):
             if row:
                 buttons.append(row)
             buttons.append([{"text": "⬅️ Orqaga", "callback_data": f"expreg:{scope}:{reg_k}"}])
-            send_message(chat_id, f"🏘 <b>{dist_name} tumani — Mahalla (MFY)ni tanlang:</b>", reply_markup={"inline_keyboard": buttons}, parse_mode="HTML")
+            send_message(chat_id, f"🏘 <b>{dist_name} — Mahalla (MFY)ni tanlang:</b>", reply_markup={"inline_keyboard": buttons}, parse_mode="HTML")
             return
 
     if data.startswith("expmfy:"):
         _, scope, reg_k, dist_k, mfy_k = data.split(":")
         mfy_name = ADDRESS_DB[reg_k]["districts"][dist_k]["mfys"][mfy_k]["name"]
+        clean_mfy_label = mfy_name if "MFY" in mfy_name else f"«{mfy_name}» MFY"
         if scope == "mfy":
-            send_message(chat_id, f"⏳ <i>«{mfy_name}» MFY bo‘yicha fayl shakllantirilmoqda...</i>", parse_mode="HTML")
+            send_message(chat_id, f"⏳ <i>{clean_mfy_label} bo‘yicha fayl shakllantirilmoqda...</i>", parse_mode="HTML")
             fpath = generate_users_excel_csv(region=reg_k, district=dist_k, mfy=mfy_k)
-            if not fpath:
-                send_message(chat_id, "ℹ️ Ushbu mahallada hali fuqarolar mavjud emas.")
-                return
-            send_document(chat_id, fpath, caption=f"📊 <b>«{mfy_name}» MFY aholi ro‘yxati</b>")
+            send_document(chat_id, fpath, caption=f"📊 <b>{clean_mfy_label} aholi ro‘yxati (Excel fayl yuklandi ✅)</b>")
             try: os.remove(fpath)
             except: pass
             return
@@ -4386,7 +4451,7 @@ def handle_callback(cb):
             if row:
                 buttons.append(row)
             buttons.append([{"text": "⬅️ Orqaga", "callback_data": f"expdist:{scope}:{reg_k}:{dist_k}"}])
-            send_message(chat_id, f"🛣 <b>«{mfy_name}» MFY — Ko‘chani tanlang:</b>", reply_markup={"inline_keyboard": buttons}, parse_mode="HTML")
+            send_message(chat_id, f"🛣 <b>{clean_mfy_label} — Ko‘chani tanlang:</b>", reply_markup={"inline_keyboard": buttons}, parse_mode="HTML")
             return
 
     if data.startswith("expst:"):
@@ -4394,10 +4459,7 @@ def handle_callback(cb):
         st_name = ADDRESS_DB[reg_k]["districts"][dist_k]["mfys"][mfy_k]["streets"][st_k]
         send_message(chat_id, f"⏳ <i>{st_name} bo‘yicha fayl shakllantirilmoqda...</i>", parse_mode="HTML")
         fpath = generate_users_excel_csv(region=reg_k, district=dist_k, mfy=mfy_k, street=st_k)
-        if not fpath:
-            send_message(chat_id, f"ℹ️ {st_name}da hali fuqarolar mavjud emas.")
-            return
-        send_document(chat_id, fpath, caption=f"📊 <b>{st_name} aholi ro‘yxati</b>")
+        send_document(chat_id, fpath, caption=f"📊 <b>{st_name} aholi ro‘yxati (Excel fayl yuklandi ✅)</b>")
         try: os.remove(fpath)
         except: pass
         return
@@ -4531,7 +4593,7 @@ def handle_callback(cb):
         prompts = {
             "full_name": "👤 Yangi <b>Ism va Familiyani</b> kiriting:\n<i>(Masalan: Ahror Suyunov)</i>",
             "phone": "📱 Yangi <b>Telefon raqamini</b> kiriting:\n<i>(Masalan: +998912345678)</i>",
-            "truck_plate": "🚛 Mashinaning yangi <b>Davlat raqamini</b> kiriting:\n<i>(Masalan: 70M260EB)</i>",
+            "truck_plate": "🚛 Mashinaning yangi <b>Davlat raqamini</b> kiriting:\n<i>(Masalan: 01A123AA yoki 01123AAA)</i>",
             "password": "🔑 Yangi <b>Kirish parolini</b> kiriting:\n<i>(Masalan: ahror2005)</i>"
         }
         send_message(chat_id, prompts.get(field, "Yangi qiymatni kiriting:"), parse_mode="HTML")
@@ -6528,12 +6590,80 @@ def run_telegram_polling():
                     offset = update["update_id"] + 1
 
                     if "message" in update:
-                        handle_message(update["message"])
+                        try:
+                            handle_message(update["message"])
+                        except Exception as em:
+                            print(f"[ERROR in handle_message]: {em}")
+                            traceback.print_exc()
                     elif "callback_query" in update:
-                        handle_callback(update["callback_query"])
+                        try:
+                            handle_callback(update["callback_query"])
+                        except Exception as ec:
+                            print(f"[ERROR in handle_callback]: {ec}")
+                            traceback.print_exc()
 
         except Exception as e:
+            print(f"[POLLING ERROR]: {e}")
             time.sleep(2)
+
+
+def generate_users_excel_csv(region=None, district=None, mfy=None, street=None):
+    users = db_manager.get_filtered_users(region=region, district=district, mfy=mfy, street=street)
+
+    # Determine descriptive title for the header
+    reg_name = ADDRESS_DB.get(region, {}).get("name", region or "O‘ZBEKISTON RESPUBLIKASI").upper()
+    dist_name = ADDRESS_DB.get(region, {}).get("districts", {}).get(district, {}).get("name", district or "").upper()
+    mfy_name = ADDRESS_DB.get(region, {}).get("districts", {}).get(district, {}).get("mfys", {}).get(mfy, {}).get("name", mfy or "")
+    st_name = ADDRESS_DB.get(region, {}).get("districts", {}).get(district, {}).get("mfys", {}).get(mfy, {}).get("streets", {}).get(street, street or "")
+
+    title_parts = [reg_name]
+    if dist_name:
+        title_parts.append(dist_name)
+    if mfy_name:
+        title_parts.append(mfy_name)
+    if st_name:
+        title_parts.append(st_name)
+    full_title = ", ".join(title_parts)
+
+    safe_name_parts = [p for p in [region, district, mfy, street] if p]
+    file_suffix = "_".join(safe_name_parts) if safe_name_parts else "Barchasi"
+    safe_file_suffix = re.sub(r'[^a-zA-Z0-9_]', '_', file_suffix)
+
+    import tempfile
+    tfile = os.path.join(tempfile.gettempdir(), f"Aholi_royxati_{safe_file_suffix}_{int(time.time())}.csv")
+
+    with open(tfile, "w", encoding="utf-8-sig") as f:
+        f.write("=" * 100 + "\n")
+        f.write(f"📍 {full_title}\n")
+        f.write("=" * 100 + "\n")
+        f.write("№,Maxsus ID,Ism va Familiya,Telefon raqami,Ro‘yxatdan o‘tgan to‘liq manzili\n")
+
+        if users:
+            counter = 1
+            for u in users:
+                acc_id = u.get("account_id") or "XP-104928"
+                fname = u.get("full_name") or "Fuqaro"
+                phone = u.get("phone") or "+998912345678"
+                
+                u_reg = u.get("region") or region or "qashqadaryo"
+                u_dist = u.get("district") or district or "nishon"
+                u_mfy = u.get("mfy") or mfy or "koksoy"
+                u_st = u.get("street") or street or "koksoy_markaziy"
+                
+                u_rn = ADDRESS_DB.get(u_reg, {}).get("name", u_reg)
+                u_dn = ADDRESS_DB.get(u_reg, {}).get("districts", {}).get(u_dist, {}).get("name", u_dist)
+                u_mn = ADDRESS_DB.get(u_reg, {}).get("districts", {}).get(u_dist, {}).get("mfys", {}).get(u_mfy, {}).get("name", u_mfy)
+                u_sn = ADDRESS_DB.get(u_reg, {}).get("districts", {}).get(u_dist, {}).get("mfys", {}).get(u_mfy, {}).get("streets", {}).get(u_st, u_st)
+                
+                full_addr = f"{u_rn}, {u_dn}, {u_mn}, {u_sn}"
+                f.write(f'{counter},{acc_id},"{fname}",{phone},"{full_addr}"\n')
+                counter += 1
+        else:
+            f.write("1,-,Hozircha ushbu hududda ro‘yxatdan o‘tgan fuqarolar mavjud emas,-,-\n")
+        f.write("\n")
+
+    return tfile
+
 
 if __name__ == "__main__":
     # Yagona nusxa bo'lishini ta'minlash (Port 3005 lock)
@@ -6547,48 +6677,3 @@ if __name__ == "__main__":
     run_telegram_polling()
 
 
-def generate_users_excel_csv(region=None, district=None, mfy=None, street=None):
-    users = db_manager.get_filtered_users(region=region, district=district, mfy=mfy, street=street)
-    if not users:
-        return None
-
-    # Group users by (region, district, mfy, street)
-    from collections import OrderedDict
-    grouped = OrderedDict()
-    for u in users:
-        reg_k = u.get("region") or "qashqadaryo"
-        dist_k = u.get("district") or "nishon"
-        mfy_k = u.get("mfy") or "koksoy"
-        st_k = u.get("street") or "koksoy_markaziy"
-        key = (reg_k, dist_k, mfy_k, st_k)
-        if key not in grouped:
-            grouped[key] = []
-        grouped[key].append(u)
-
-    import tempfile
-    tfile = os.path.join(tempfile.gettempdir(), f"Aholi_royxati_{int(time.time())}.csv")
-    with open(tfile, "w", encoding="utf-8-sig") as f:
-        # Write UTF-8 BOM
-        counter = 1
-        for (reg_k, dist_k, mfy_k, st_k), u_list in grouped.items():
-            reg_n = ADDRESS_DB.get(reg_k, {}).get("name", reg_k).upper()
-            dist_n = ADDRESS_DB.get(reg_k, {}).get("districts", {}).get(dist_k, {}).get("name", dist_k).upper()
-            mfy_n = ADDRESS_DB.get(reg_k, {}).get("districts", {}).get(dist_k, {}).get("mfys", {}).get(mfy_k, {}).get("name", mfy_k)
-            st_n = ADDRESS_DB.get(reg_k, {}).get("districts", {}).get(dist_k, {}).get("mfys", {}).get(mfy_k, {}).get("streets", {}).get(st_k, st_k)
-
-            f.write("=" * 100 + "\n")
-            mfy_clean = mfy_n.replace("«", "").replace("»", "").replace("MFY", "").replace("mfy", "").strip()
-            f.write(f"📍 {reg_n}, {dist_n}, «{mfy_clean}» MFY, {st_n.upper()}\n")
-            f.write("=" * 100 + "\n")
-            f.write("№,Maxsus ID,Ism va Familiya,Telefon raqami,Ro‘yxatdan o‘tgan to‘liq manzili\n")
-
-            for u in u_list:
-                acc_id = u.get("account_id") or "XP-104928"
-                fname = u.get("full_name") or "Fuqaro"
-                phone = u.get("phone") or "+998912345678"
-                full_addr = f"{ADDRESS_DB.get(reg_k, {}).get('name', reg_k)}, {ADDRESS_DB.get(reg_k, {}).get('districts', {}).get(dist_k, {}).get('name', dist_k)}, {mfy_n} MFY, {st_n}"
-                f.write(f'{counter},{acc_id},"{fname}",{phone},"{full_addr}"\n')
-                counter += 1
-            f.write("\n")
-
-    return tfile

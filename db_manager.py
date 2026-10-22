@@ -143,21 +143,8 @@ def init_db():
     # To'liq toza tizim - hech qanday mock yoki sinov fuqarolari kiritilmaydi
     pass
 
-    # Clean up any lingering mock seed drivers
-    try:
-        cursor.execute("DELETE FROM drivers WHERE phone LIKE '%901234567%' OR truck_plate LIKE '%30 782 AGA%';")
-        cursor.execute("DELETE FROM driver_live WHERE phone LIKE '%901234567%' OR truck_plate LIKE '%30 782 AGA%';")
-    except Exception:
-        pass
+    # Tizim jadvallari saqlanadi - hech qanday ma'lumotlar o'chirilmaydi
 
-    # Foydalanuvchi talabiga ko'ra barcha eski mashina, haydovchi va 2FA ma'lumotlarini tozalash
-    try:
-        cursor.execute("DELETE FROM drivers;")
-        cursor.execute("DELETE FROM driver_live;")
-        cursor.execute("UPDATE users SET two_step_password = NULL, two_step_hint = NULL;")
-        cursor.execute("DELETE FROM sessions;"); cursor.execute("DELETE FROM user_avatars;"); cursor.execute("DELETE FROM users;")
-    except Exception as _we:
-        pass
 
     try:
         cursor.execute("ALTER TABLE drivers ADD COLUMN account_id TEXT;")
@@ -342,17 +329,52 @@ def get_filtered_users(region=None, district=None, mfy=None, street=None):
 # --- DRIVER FUNCTIONS ---
 def add_driver(phone, full_name, truck_plate, password='gaz2026', truck_model='Isuzu NPR 75', truck_color='Oq (Sariq chiziqli)', assigned_region='qashqadaryo', assigned_district='nishon', assigned_mfy='koksoy'):
     clean_p = phone.strip()
+    digits = re.sub(r'\D', '', clean_p)
+    last9 = digits[-9:] if len(digits) >= 9 else digits
+    clean_plate = re.sub(r'[^A-Z0-9]', '', str(truck_plate).upper())
+
     conn = get_connection()
     c = conn.cursor()
 
-    c.execute("SELECT account_id FROM drivers WHERE phone = ?", (clean_p,))
-    row = c.fetchone()
-    account_id = row["account_id"] if row and row["account_id"] else generate_unique_account_id("HP-")
+    # 1. Telefon raqami bazada bormi (oxirgi 9 ta raqam bo'yicha)?
+    if last9:
+        c.execute("SELECT * FROM drivers")
+        for r in c.fetchall():
+            r_dict = dict(r)
+            d_digits = re.sub(r'\D', '', str(r_dict.get('phone') or ''))
+            d_last9 = d_digits[-9:] if len(d_digits) >= 9 else d_digits
+            if d_last9 and (d_last9 == last9 or (len(last9) == 9 and last9 in d_digits)):
+                d_name = r_dict.get('full_name', 'Boshqa haydovchi')
+                acc = r_dict.get('account_id', '')
+                conn.close()
+                return {
+                    "ok": False,
+                    "error": "phone_exists",
+                    "message": f"Ushbu telefon raqami allaqachon ro‘yxatdan o‘tgan! ({d_name} — {acc})"
+                }
+
+    # 2. Davlat raqami bazada bormi (harflar katta-kichikligidan qat'i nazar, aynan bir xil)?
+    if clean_plate:
+        c.execute("SELECT * FROM drivers")
+        for r in c.fetchall():
+            r_dict = dict(r)
+            d_plate = re.sub(r'[^A-Z0-9]', '', str(r_dict.get('truck_plate') or '').upper())
+            if d_plate == clean_plate:
+                d_name = r_dict.get('full_name', 'Boshqa haydovchi')
+                acc = r_dict.get('account_id', '')
+                conn.close()
+                return {
+                    "ok": False,
+                    "error": "plate_exists",
+                    "message": f"Ushbu davlat raqami allaqachon ro‘yxatdan o‘tgan! ({d_name} — {acc})"
+                }
+
+    account_id = generate_unique_account_id("HP-")
 
     c.execute("""
-    INSERT OR REPLACE INTO drivers (phone, full_name, truck_model, truck_plate, truck_color, assigned_region, assigned_district, assigned_mfy, password, account_id, is_active)
+    INSERT INTO drivers (phone, full_name, truck_model, truck_plate, truck_color, assigned_region, assigned_district, assigned_mfy, password, account_id, is_active)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-    """, (clean_p, full_name, truck_model, truck_plate, truck_color, assigned_region, assigned_district, assigned_mfy, password, account_id))
+    """, (clean_p, full_name, truck_model, clean_plate, truck_color, assigned_region, assigned_district, assigned_mfy, password, account_id))
     
     # Also ensure user table has driver role and same account_id
     c.execute("""
@@ -361,37 +383,52 @@ def add_driver(phone, full_name, truck_plate, password='gaz2026', truck_model='I
     """, (clean_p, full_name, assigned_region, assigned_district, assigned_mfy, account_id))
     c.execute("UPDATE users SET two_step_password = NULL, two_step_hint = NULL WHERE phone = ? OR phone LIKE ?", (clean_p, f"%{clean_p[-9:]}%"))
 
-    # Also register in driver_live with initial WAITING status (never shown to citizens until driver starts working)
+    # Also register in driver_live with initial WAITING status
     c.execute("""
     INSERT OR REPLACE INTO driver_live (phone, driver_name, truck_plate, truck_model, truck_color, status, stage, lat, lng, region, district, mfy)
     VALUES (?, ?, ?, ?, ?, 'waiting', 'collect', NULL, NULL, ?, ?, ?)
-    """, (clean_p, full_name, truck_plate, truck_model, truck_color, assigned_region, assigned_district, assigned_mfy))
+    """, (clean_p, full_name, clean_plate, truck_model, truck_color, assigned_region, assigned_district, assigned_mfy))
 
     conn.commit()
     conn.close()
-    return {"ok": True, "account_id": account_id, "message": f"Haydovchi {full_name} ({truck_plate}) muvaffaqiyatli qo‘shildi!"}
+    return {"ok": True, "account_id": account_id, "message": f"Haydovchi {full_name} ({clean_plate}) muvaffaqiyatli qo‘shildi!"}
+
+
 
 def get_driver_by_phone(phone):
-    conn = get_connection()
-    c = conn.cursor()
-    raw = str(phone or '').strip()
+    if not phone:
+        return None
+    raw = str(phone).strip()
     digits = re.sub(r'\D', '', raw)
     last9 = digits[-9:] if len(digits) >= 9 else digits
     if not last9:
-        conn.close()
         return None
-    c.execute("SELECT * FROM drivers WHERE (phone = ? OR phone LIKE ? OR phone LIKE ?) AND is_active = 1", 
-              (raw, f"%{last9}%", f"%{digits}%"))
-    row = c.fetchone()
-    if row:
-        conn.close()
-        return dict(row)
-    # Fallback: scan all active drivers with normalized phone comparison
-    c.execute("SELECT * FROM drivers WHERE is_active = 1")
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT * FROM drivers")
     for r in c.fetchall():
         d_dict = dict(r)
         d_digits = re.sub(r'\D', '', str(d_dict.get('phone', '')))
         if d_digits.endswith(last9) or last9 in d_digits:
+            conn.close()
+            return d_dict
+    conn.close()
+    return None
+
+
+def get_driver_by_plate(plate):
+    if not plate:
+        return None
+    clean_p = re.sub(r'[^A-Z0-9]', '', str(plate).upper())
+    if not clean_p:
+        return None
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT * FROM drivers")
+    for r in c.fetchall():
+        d_dict = dict(r)
+        d_plate = re.sub(r'[^A-Z0-9]', '', str(d_dict.get('truck_plate', '')).upper())
+        if d_plate == clean_p:
             conn.close()
             return d_dict
     conn.close()
