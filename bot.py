@@ -2607,12 +2607,16 @@ def send_driver_card(target_chat_id, d):
         d_id = d.get('account_id') or 'HP-100000'
         d_phone = d.get('phone', '')
         d_plate = d.get('truck_plate', '')
+        d_model = d.get('truck_model') or 'Isuzu'
+        d_color = d.get('truck_color') or 'Oq'
         d_pass = d.get('password', '')
 
         card = (
             f"👤 <b>Ism va familiya:</b> {safe_html(d_name)}\n"
             f"🆔 <b>Maxsus ID:</b> <code>{safe_html(d_id)}</code>\n"
             f"📱 <b>Telefon (Login):</b> <code>{safe_html(d_phone)}</code>\n"
+            f"🚚 <b>Mashina rusumi:</b> {safe_html(d_model)}\n"
+            f"🎨 <b>Mashina rangi:</b> {safe_html(d_color)}\n"
             f"🚛 <b>Mashina raqami:</b> <code>{safe_html(d_plate)}</code>\n"
             f"🔑 <b>Kirish paroli:</b> <code>{safe_html(d_pass)}</code>"
         )
@@ -2630,6 +2634,8 @@ def send_driver_card(target_chat_id, d):
                 f"👤 Ism va familiya: {d_name}\n"
                 f"🆔 Maxsus ID: {d_id}\n"
                 f"📱 Telefon: {d_phone}\n"
+                f"🚚 Mashina rusumi: {d_model}\n"
+                f"🎨 Mashina rangi: {d_color}\n"
                 f"🚛 Mashina raqami: {d_plate}\n"
                 f"🔑 Kirish paroli: {d_pass}"
             )
@@ -3791,6 +3797,8 @@ def handle_message(msg):
             field_labels = {
                 "full_name": "👤 Ism va familiya",
                 "phone": "📱 Telefon raqami (Login)",
+                "truck_model": "🚚 Mashina rusumi",
+                "truck_color": "🎨 Mashina rangi",
                 "truck_plate": "🚛 Mashina raqami",
                 "password": "🔑 Kirish paroli"
             }
@@ -4637,12 +4645,16 @@ def handle_callback(cb):
         d_id = drv.get("account_id") or "HP-100000"
         d_phone = drv.get("phone", "")
         d_plate = drv.get("truck_plate", "")
+        d_model = drv.get("truck_model") or "Isuzu"
+        d_color = drv.get("truck_color") or "Oq"
 
         edit_menu_text = (
             f"✏️ <b>HAYDOVCHI MA’LUMOTLARINI TAHRIRLASH:</b>\n\n"
             f"👤 <b>Ism va familiya:</b> {safe_html(d_name)}\n"
             f"🆔 <b>Maxsus ID:</b> <code>{safe_html(d_id)}</code>\n"
             f"📱 <b>Telefon:</b> <code>{safe_html(d_phone)}</code>\n"
+            f"🚚 <b>Mashina rusumi:</b> {safe_html(d_model)}\n"
+            f"🎨 <b>Mashina rangi:</b> {safe_html(d_color)}\n"
             f"🚛 <b>Mashina raqami:</b> <code>{safe_html(d_plate)}</code>\n\n"
             "Qaysi ma’lumotni o‘zgartirmoqchisiz? Tanlang 👇"
         )
@@ -4650,6 +4662,8 @@ def handle_callback(cb):
             "inline_keyboard": [
                 [{"text": "👤 Ism va familiya", "callback_data": f"chfield_{phone_to_edit}_full_name"}],
                 [{"text": "📱 Telefon raqami", "callback_data": f"chfield_{phone_to_edit}_phone"}],
+                [{"text": "🚚 Mashina rusumi", "callback_data": f"chfield_{phone_to_edit}_truck_model"}],
+                [{"text": "🎨 Mashina rangi", "callback_data": f"chfield_{phone_to_edit}_truck_color"}],
                 [{"text": "🚛 Mashina raqami", "callback_data": f"chfield_{phone_to_edit}_truck_plate"}],
                 [{"text": "🔑 Kirish paroli", "callback_data": f"chfield_{phone_to_edit}_password"}],
                 [{"text": "⬅️ Bekor qilish", "callback_data": "cancel_edit"}]
@@ -4661,7 +4675,7 @@ def handle_callback(cb):
     if data.startswith("chfield_"):
         parts = data.split("_")
         field = parts[-1]
-        if field in ["name", "plate"]:
+        if field in ["name", "plate", "model", "color"]:
             field = parts[-2] + "_" + parts[-1]
             phone_target = "_".join(parts[1:-2])
         else:
@@ -4677,6 +4691,8 @@ def handle_callback(cb):
         prompts = {
             "full_name": "👤 Yangi <b>Ism va Familiyani</b> kiriting:\n<i>(Masalan: Ahror Suyunov)</i>",
             "phone": "📱 Yangi <b>Telefon raqamini</b> kiriting:\n<i>(Masalan: +998912345678)</i>",
+            "truck_model": "🚚 Mashinaning yangi <b>Rusumini</b> kiriting:\n<i>(Masalan: Isuzu yoki Isuzu NPR 75)</i>",
+            "truck_color": "🎨 Mashinaning yangi <b>Rangini</b> kiriting:\n<i>(Masalan: Oq yoki Oq (Sariq chiziqli))</i>",
             "truck_plate": "🚛 Mashinaning yangi <b>Davlat raqamini</b> kiriting:\n<i>(Masalan: 01A123AA yoki 01123AAA)</i>",
             "password": "🔑 Yangi <b>Kirish parolini</b> kiriting:\n<i>(Masalan: ahror2005)</i>"
         }
@@ -4710,6 +4726,27 @@ def handle_callback(cb):
                 for s_key, s_val in list(active_driver_states.items()):
                     if s_val.get("account_phone") == phone or s_val.get("phone") == phone or phone.endswith(str(s_key)[-9:]):
                         s_val["driver_name"] = new_fn
+            elif field == "truck_model":
+                new_m = str(new_val).strip()
+                if current_driver_state.get("driver_phone") == phone:
+                    current_driver_state["truck_model"] = new_m
+                for s_key, s_val in list(active_driver_states.items()):
+                    if s_val.get("account_phone") == phone or s_val.get("phone") == phone or phone.endswith(str(s_key)[-9:]):
+                        s_val["truck_model"] = new_m
+            elif field == "truck_color":
+                new_c = str(new_val).strip()
+                if current_driver_state.get("driver_phone") == phone:
+                    current_driver_state["truck_color"] = new_c
+                for s_key, s_val in list(active_driver_states.items()):
+                    if s_val.get("account_phone") == phone or s_val.get("phone") == phone or phone.endswith(str(s_key)[-9:]):
+                        s_val["truck_color"] = new_c
+            elif field == "truck_plate":
+                new_p = str(new_val).strip().upper()
+                if current_driver_state.get("driver_phone") == phone:
+                    current_driver_state["truck_plate"] = new_p
+                for s_key, s_val in list(active_driver_states.items()):
+                    if s_val.get("account_phone") == phone or s_val.get("phone") == phone or phone.endswith(str(s_key)[-9:]):
+                        s_val["truck_plate"] = new_p
             edit_message_text(
                 chat_id, msg_id,
                 "✅ <b>Ma’lumot muvaffaqiyatli saqlandi va yangilandi!</b>",
@@ -4723,10 +4760,14 @@ def handle_callback(cb):
                 d_plate = updated_drv.get('truck_plate', '')
                 d_pass = updated_drv.get('password', '')
 
+                d_model = updated_drv.get('truck_model') or 'Isuzu'
+                d_color = updated_drv.get('truck_color') or 'Oq'
                 card = (
                     f"👤 <b>Ism va familiya:</b> {safe_html(d_name)}\n"
                     f"🆔 <b>Maxsus ID:</b> <code>{safe_html(d_id)}</code>\n"
                     f"📱 <b>Telefon (Login):</b> <code>{safe_html(d_phone)}</code>\n"
+                    f"🚚 <b>Mashina rusumi:</b> {safe_html(d_model)}\n"
+                    f"🎨 <b>Mashina rangi:</b> {safe_html(d_color)}\n"
                     f"🚛 <b>Mashina raqami:</b> <code>{safe_html(d_plate)}</code>\n"
                     f"🔑 <b>Kirish paroli:</b> <code>{safe_html(d_pass)}</code>"
                 )
@@ -5326,7 +5367,8 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 qs = parse_qs(parsed.query)
                 q_phone = qs.get("phone", [""])[0].strip()
                 q_role = qs.get("role", ["resident"])[0].strip()
-                av_url = db_manager.get_user_avatar(q_phone, q_role)
+                q_account_id = qs.get("account_id", [""])[0].strip()
+                av_url = db_manager.get_user_avatar(q_phone, q_role, q_account_id)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Access-Control-Allow-Origin", "*")
@@ -5419,6 +5461,7 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 data = json.loads(body)
                 phone = str(data.get("phone", "")).strip()
                 role = str(data.get("role", "resident")).strip()
+                account_id = str(data.get("account_id", "")).strip()
                 image_data = data.get("image_data", "")
 
                 avatar_url = ""
@@ -5445,7 +5488,7 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 if final_avatar_url.startswith("/"):
                     final_avatar_url = f"https://xonadon-plus-server.onrender.com{final_avatar_url}"
 
-                db_manager.save_user_avatar(phone, role, final_avatar_url)
+                db_manager.save_user_avatar(phone, role, final_avatar_url, account_id)
                 if role == "driver":
                     current_driver_state["avatar_url"] = final_avatar_url
                     clean_full = re.sub(r'\D', '', phone)
@@ -6108,7 +6151,8 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                                 status_2fa = db_manager.get_user_2fa_status(matched["phone"])
                                 matched_dict = dict(matched)
                                 if not matched_dict.get("account_id"):
-                                    matched_dict["account_id"] = db_manager.generate_unique_account_id("XP-")
+                                    matched_dict["account_id"] = db_manager.generate_unique_account_id("HP-")
+                                matched_dict["avatar_url"] = matched_dict.get("avatar_url") or db_manager.get_user_avatar(matched["phone"], "driver", matched_dict.get("account_id", ""))
                                 resp = {
                                     "ok": True,
                                     "user": matched_dict,
@@ -7176,8 +7220,8 @@ def build_drivers_pure_xlsx(filepath, title, subtitle, headers, rows):
   </cellXfs>
 </styleSheet>'''
 
-    col_letters = ['A', 'B', 'C', 'D', 'E', 'F']
-    col_widths = [6, 16, 32, 20, 18, 22]
+    col_letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
+    col_widths = [6, 16, 30, 18, 18, 18, 16, 22]
     sheet_lines = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
                    '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">',
                    '<sheetViews><sheetView tabSelected="1" workbookViewId="0" showGridLines="1"/></sheetViews>',
@@ -7217,10 +7261,10 @@ def build_drivers_pure_xlsx(filepath, title, subtitle, headers, rows):
 
     sheet_lines.append('</sheetData>')
     sheet_lines.append('<mergeCells count="2">')
-    sheet_lines.append('<mergeCell ref="A1:F1"/>')
-    sheet_lines.append('<mergeCell ref="A2:F2"/>')
+    sheet_lines.append('<mergeCell ref="A1:H1"/>')
+    sheet_lines.append('<mergeCell ref="A2:H2"/>')
     if not rows:
-        sheet_lines.append('<mergeCell ref="A5:F5"/>')
+        sheet_lines.append('<mergeCell ref="A5:H5"/>')
     sheet_lines.append('</mergeCells>')
     sheet_lines.append('</worksheet>')
     sheet1_xml = '\n'.join(sheet_lines)
@@ -7249,6 +7293,8 @@ def generate_drivers_excel():
         "Haydovchining ism-familiyasi",
         "Telefon raqami",
         "Davlat raqami",
+        "Mashina rusumi",
+        "Mashina rangi",
         "Ro‘yxatdan o‘tgan sana"
     ]
 
@@ -7258,8 +7304,10 @@ def generate_drivers_excel():
         fname = d.get("full_name") or "Noma'lum"
         phone = d.get("phone") or ""
         plate = d.get("truck_plate") or "Biriktirilmagan"
+        model = d.get("truck_model") or "Isuzu"
+        color = d.get("truck_color") or "Oq"
         created_dt = format_uzb_timestamp(d.get("created_at"))
-        prepared_rows.append([idx, d_id, fname, phone, plate, created_dt])
+        prepared_rows.append([idx, d_id, fname, phone, plate, model, color, created_dt])
 
     try:
         import openpyxl
@@ -7272,7 +7320,7 @@ def generate_drivers_excel():
         ws.views.sheetView[0].showGridLines = True
 
         # 1-qator: Sarlavha banneri
-        ws.merge_cells("A1:F1")
+        ws.merge_cells("A1:H1")
         t_cell = ws["A1"]
         t_cell.value = title_text
         t_cell.font = Font(name="Calibri", size=13, bold=True, color="FFFFFF")
@@ -7281,7 +7329,7 @@ def generate_drivers_excel():
         ws.row_dimensions[1].height = 36
 
         # 2-qator: Sana va statistika
-        ws.merge_cells("A2:F2")
+        ws.merge_cells("A2:H2")
         s_cell = ws["A2"]
         s_cell.value = subtitle_text
         s_cell.font = Font(name="Calibri", size=10, italic=True, color="475569")
@@ -7319,13 +7367,13 @@ def generate_drivers_excel():
                     c.font = Font(name="Calibri", size=10)
                     c.fill = r_fill
                     c.border = border
-                    if c_idx in (1, 2, 4, 5, 6):
+                    if c_idx in (1, 2, 4, 5, 6, 7, 8):
                         c.alignment = Alignment(horizontal="center", vertical="center")
                     else:
                         c.alignment = Alignment(horizontal="left", vertical="center")
                 row_idx += 1
         else:
-            ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=6)
+            ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=8)
             c = ws.cell(row=row_idx, column=1)
             c.value = "Hozircha tizimda ro‘yxatdan o‘tgan haydovchilar mavjud emas."
             c.font = Font(name="Calibri", size=10, italic=True, color="64748B")

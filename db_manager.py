@@ -442,7 +442,7 @@ def get_filtered_users(region=None, district=None, mfy=None, street=None):
 
 
 # --- DRIVER FUNCTIONS ---
-def add_driver(phone, full_name, truck_plate, password='gaz2026', truck_model='Isuzu NPR 75', truck_color='Oq (Sariq chiziqli)', assigned_region='qashqadaryo', assigned_district='nishon', assigned_mfy='koksoy'):
+def add_driver(phone, full_name, truck_plate, password='gaz2026', truck_model='Isuzu', truck_color='Oq', assigned_region='qashqadaryo', assigned_district='nishon', assigned_mfy='koksoy'):
     clean_p = phone.strip()
     digits = re.sub(r'\D', '', clean_p)
     last9 = digits[-9:] if len(digits) >= 9 else digits
@@ -611,6 +611,14 @@ def update_driver_admin_credentials(phone, field, new_value):
         new_plate = new_value.strip().upper()
         c.execute("UPDATE drivers SET truck_plate = ? WHERE phone = ?", (new_plate, old_phone))
         c.execute("UPDATE driver_live SET truck_plate = ? WHERE phone LIKE ?", (new_plate, f"%{clean_old_last9}%"))
+    elif field == "truck_model":
+        new_model = new_value.strip()
+        c.execute("UPDATE drivers SET truck_model = ? WHERE phone = ?", (new_model, old_phone))
+        c.execute("UPDATE driver_live SET truck_model = ? WHERE phone LIKE ?", (new_model, f"%{clean_old_last9}%"))
+    elif field == "truck_color":
+        new_color = new_value.strip()
+        c.execute("UPDATE drivers SET truck_color = ? WHERE phone = ?", (new_color, old_phone))
+        c.execute("UPDATE driver_live SET truck_color = ? WHERE phone LIKE ?", (new_color, f"%{clean_old_last9}%"))
     elif field == "password":
         c.execute("UPDATE drivers SET password = ? WHERE phone = ?", (new_value.strip(), old_phone))
 
@@ -921,14 +929,12 @@ def verify_otp(phone, code):
     return str(row["code"]).strip() == str(code).strip()
 
 # --- AVATAR & ACTIVE TRUCKS FUNCTIONS ---
-def save_user_avatar(phone, role, avatar_url):
+def save_user_avatar(phone, role, avatar_url, account_id=""):
     conn = get_connection()
     c = conn.cursor()
     clean_p = re.sub(r'\D', '', str(phone or ''))
-    if not clean_p:
-        conn.close()
-        return False
-        
+    acc_clean = str(account_id or '').strip()
+
     c.execute("""
         CREATE TABLE IF NOT EXISTS user_avatars (
             phone_clean TEXT PRIMARY KEY,
@@ -938,52 +944,76 @@ def save_user_avatar(phone, role, avatar_url):
             updated_at TIMESTAMP DEFAULT (datetime('now', '+5 hours'))
         )
     """)
-    c.execute("""
-        INSERT OR REPLACE INTO user_avatars (phone_clean, full_phone, role, avatar_url, updated_at)
-        VALUES (?, ?, ?, ?, (datetime('now', '+5 hours')))
-    """, (clean_p[-9:], phone, role, avatar_url))
+    if clean_p:
+        c.execute("""
+            INSERT OR REPLACE INTO user_avatars (phone_clean, full_phone, role, avatar_url, updated_at)
+            VALUES (?, ?, ?, ?, (datetime('now', '+5 hours')))
+        """, (clean_p[-9:], phone, role, avatar_url))
 
     if role == 'driver':
-        c.execute("UPDATE drivers SET avatar_url = ? WHERE phone LIKE ?", (avatar_url, f"%{clean_p[-9:]}%"))
-        c.execute("UPDATE driver_live SET updated_at = (datetime('now', '+5 hours')) WHERE phone LIKE ?", (f"%{clean_p[-9:]}%",))
+        if clean_p:
+            c.execute("UPDATE drivers SET avatar_url = ? WHERE phone LIKE ?", (avatar_url, f"%{clean_p[-9:]}%"))
+            c.execute("UPDATE driver_live SET updated_at = (datetime('now', '+5 hours')), avatar_url = ? WHERE phone LIKE ?", (avatar_url, f"%{clean_p[-9:]}%"))
+        if acc_clean:
+            c.execute("UPDATE drivers SET avatar_url = ? WHERE UPPER(account_id) = UPPER(?)", (avatar_url, acc_clean))
+            c.execute("UPDATE driver_live SET avatar_url = ? WHERE UPPER(driver_name) LIKE ? OR UPPER(truck_plate) LIKE ?", (avatar_url, f"%{acc_clean}%", f"%{acc_clean}%"))
     else:
-        c.execute("UPDATE users SET avatar_url = ? WHERE phone LIKE ?", (avatar_url, f"%{clean_p[-9:]}%"))
+        if clean_p:
+            c.execute("UPDATE users SET avatar_url = ? WHERE phone LIKE ?", (avatar_url, f"%{clean_p[-9:]}%"))
     conn.commit()
     conn.close()
     return True
 
-def get_user_avatar(phone, role='resident'):
+def get_user_avatar(phone, role='resident', account_id=''):
     conn = get_connection()
     c = conn.cursor()
     clean_p = re.sub(r'\D', '', str(phone or ''))
-    if len(clean_p) < 9:
-        conn.close()
-        return ""
-    
-    # 1. Check dedicated user_avatars table first
-    try:
-        c.execute("SELECT avatar_url FROM user_avatars WHERE phone_clean = ?", (clean_p[-9:],))
-        row = c.fetchone()
-        if row and row["avatar_url"]:
-            conn.close()
-            return row["avatar_url"]
-    except Exception:
-        pass
+    last9 = clean_p[-9:] if len(clean_p) >= 9 else clean_p
+    acc_clean = str(account_id or '').strip()
 
-    # 2. Check drivers table if driver
-    if role == 'driver':
-        c.execute("SELECT avatar_url FROM drivers WHERE phone LIKE ?", (f"%{clean_p[-9:]}%",))
-        row = c.fetchone()
-        if row and row["avatar_url"]:
-            conn.close()
-            return row["avatar_url"]
+    # 1. Check by account_id in drivers
+    if acc_clean:
+        try:
+            c.execute("SELECT avatar_url FROM drivers WHERE UPPER(account_id) = UPPER(?) AND avatar_url != ''", (acc_clean,))
+            r = c.fetchone()
+            if r and r["avatar_url"]:
+                conn.close()
+                return r["avatar_url"]
+        except Exception:
+            pass
 
-    # 3. Check users table
-    c.execute("SELECT avatar_url FROM users WHERE phone LIKE ?", (f"%{clean_p[-9:]}%",))
-    row = c.fetchone()
-    if row and row["avatar_url"]:
-        conn.close()
-        return row["avatar_url"]
+    # 2. Check dedicated user_avatars table
+    if last9:
+        try:
+            c.execute("SELECT avatar_url FROM user_avatars WHERE phone_clean = ? AND avatar_url != ''", (last9,))
+            row = c.fetchone()
+            if row and row["avatar_url"]:
+                conn.close()
+                return row["avatar_url"]
+        except Exception:
+            pass
+
+    # 3. Check drivers table if driver
+    if last9 and role == 'driver':
+        try:
+            c.execute("SELECT avatar_url FROM drivers WHERE phone LIKE ? AND avatar_url != ''", (f"%{last9}%",))
+            row = c.fetchone()
+            if row and row["avatar_url"]:
+                conn.close()
+                return row["avatar_url"]
+        except Exception:
+            pass
+
+    # 4. Check users table
+    if last9:
+        try:
+            c.execute("SELECT avatar_url FROM users WHERE phone LIKE ? AND avatar_url != ''", (f"%{last9}%",))
+            row = c.fetchone()
+            if row and row["avatar_url"]:
+                conn.close()
+                return row["avatar_url"]
+        except Exception:
+            pass
 
     conn.close()
     return ""
