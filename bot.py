@@ -7,6 +7,7 @@ ko'chalar bo'yicha aniq filtrlangan xabarnomalar xizmati.
 import json
 import os
 import sys
+import tempfile
 import traceback
 import db_manager
 db_manager.init_db()
@@ -2609,7 +2610,7 @@ def send_driver_card(target_chat_id, d):
         d_pass = d.get('password', '')
 
         card = (
-            f"👤 <b>I.F:</b> {safe_html(d_name)}\n"
+            f"👤 <b>Ism va familiya:</b> {safe_html(d_name)}\n"
             f"🆔 <b>Maxsus ID:</b> <code>{safe_html(d_id)}</code>\n"
             f"📱 <b>Telefon (Login):</b> <code>{safe_html(d_phone)}</code>\n"
             f"🚛 <b>Mashina raqami:</b> <code>{safe_html(d_plate)}</code>\n"
@@ -2626,7 +2627,7 @@ def send_driver_card(target_chat_id, d):
         res = send_message(target_chat_id, card, reply_markup=inline_kb, parse_mode="HTML")
         if not res:
             plain_card = (
-                f"👤 I.F: {d_name}\n"
+                f"👤 Ism va familiya: {d_name}\n"
                 f"🆔 Maxsus ID: {d_id}\n"
                 f"📱 Telefon: {d_phone}\n"
                 f"🚛 Mashina raqami: {d_plate}\n"
@@ -3305,15 +3306,22 @@ def handle_message(msg):
             send_message(chat_id, msg_prompt, parse_mode="HTML")
             return
 
-        # 6. Haydovchilar ro'yxati
+        # 6. Haydovchilar ro'yxati (Faqat toza Excel .xlsx yuboriladi)
         if text in ["📋 Haydovchilar ro‘yxati", "📋 Haydovchilar ro'yxati", "/drivers"]:
             drivers = db_manager.get_all_drivers()
             if not drivers:
                 send_message(chat_id, "Hozircha tizimda faol haydovchilar yo‘q.")
                 return
-            send_message(chat_id, f"📋 <b>TIZIMDAGI HAYDOVCHILAR (Jami: {len(drivers)} ta):</b>\n<i>Tahrirlash yoki o‘chirish uchun kerakli tugmani bosing:</i>", parse_mode="HTML")
-            for d in drivers:
-                send_driver_card(chat_id, d)
+            excel_path = generate_drivers_excel()
+            cap = (
+                f"📋 <b>TIZIMDAGI HAYDOVCHILAR RO‘YXATI (EXCEL)</b>\n\n"
+                f"🚚 Jami haydovchilar: <b>{len(drivers)} nafar</b>\n"
+                f"📅 Shakllantirilgan vaqt: <code>{get_uzb_time_str('%d.%m.%Y %H:%M')}</code>\n\n"
+                f"<i>Fayl yuklab olindi va tayyorlandi ✅</i>"
+            )
+            res = send_document(chat_id, excel_path, caption=cap)
+            if not res:
+                send_message(chat_id, "❌ Excel faylni yuklashda xatolik yuz berdi.")
             return
 
         # 7. Fuqarolar statistikasi
@@ -3706,7 +3714,7 @@ def handle_message(msg):
 
             succ_text = (
                 "✅ <b>HAYDOVCHI MUVAFFAQIYATLI QO‘SHILDI!</b>\n\n"
-                f"👤 <b>I.F:</b> {safe_html(d_name)}\n"
+                f"👤 <b>Ism va familiya:</b> {safe_html(d_name)}\n"
                 f"🆔 <b>Maxsus ID:</b> <code>{safe_html(d_id)}</code>\n"
                 f"📱 <b>Login (Telefon):</b> <code>{safe_html(d_phone)}</code>\n"
                 f"🚛 <b>Mashina raqami:</b> <code>{safe_html(d_plate)}</code>\n"
@@ -4576,9 +4584,16 @@ def handle_callback(cb):
         if not drivers:
             send_message(chat_id, "Hozircha tizimda haydovchilar yo‘q.")
             return
-        send_message(chat_id, f"📋 <b>TIZIMDAGI HAYDOVCHILAR (Jami: {len(drivers)} ta):</b>\n<i>Tahrirlash yoki o‘chirish uchun kerakli tugmani bosing:</i>", parse_mode="HTML")
-        for d in drivers:
-            send_driver_card(chat_id, d)
+        excel_path = generate_drivers_excel()
+        cap = (
+            f"📋 <b>TIZIMDAGI HAYDOVCHILAR RO‘YXATI (EXCEL)</b>\n\n"
+            f"🚚 Jami haydovchilar: <b>{len(drivers)} nafar</b>\n"
+            f"📅 Shakllantirilgan vaqt: <code>{get_uzb_time_str('%d.%m.%Y %H:%M')}</code>\n\n"
+            f"<i>Fayl yuklab olindi va tayyorlandi ✅</i>"
+        )
+        res = send_document(chat_id, excel_path, caption=cap)
+        if not res:
+            send_message(chat_id, "❌ Excel faylni yuklashda xatolik yuz berdi.")
         return
 
     if data == "admin_users_stat":
@@ -4625,7 +4640,7 @@ def handle_callback(cb):
 
         edit_menu_text = (
             f"✏️ <b>HAYDOVCHI MA’LUMOTLARINI TAHRIRLASH:</b>\n\n"
-            f"👤 <b>I.F:</b> {safe_html(d_name)}\n"
+            f"👤 <b>Ism va familiya:</b> {safe_html(d_name)}\n"
             f"🆔 <b>Maxsus ID:</b> <code>{safe_html(d_id)}</code>\n"
             f"📱 <b>Telefon:</b> <code>{safe_html(d_phone)}</code>\n"
             f"🚛 <b>Mashina raqami:</b> <code>{safe_html(d_plate)}</code>\n\n"
@@ -4688,6 +4703,13 @@ def handle_callback(cb):
         res = db_manager.update_driver_admin_credentials(phone, field, new_val)
         if res.get("ok"):
             updated_drv = res.get("driver") or db_manager.get_driver_by_phone(new_val if field == "phone" else phone)
+            if field == "full_name":
+                new_fn = str(new_val).strip()
+                if current_driver_state.get("driver_phone") == phone:
+                    current_driver_state["driver_name"] = new_fn
+                for s_key, s_val in list(active_driver_states.items()):
+                    if s_val.get("account_phone") == phone or s_val.get("phone") == phone or phone.endswith(str(s_key)[-9:]):
+                        s_val["driver_name"] = new_fn
             edit_message_text(
                 chat_id, msg_id,
                 "✅ <b>Ma’lumot muvaffaqiyatli saqlandi va yangilandi!</b>",
@@ -4702,7 +4724,7 @@ def handle_callback(cb):
                 d_pass = updated_drv.get('password', '')
 
                 card = (
-                    f"👤 <b>I.F:</b> {safe_html(d_name)}\n"
+                    f"👤 <b>Ism va familiya:</b> {safe_html(d_name)}\n"
                     f"🆔 <b>Maxsus ID:</b> <code>{safe_html(d_id)}</code>\n"
                     f"📱 <b>Telefon (Login):</b> <code>{safe_html(d_phone)}</code>\n"
                     f"🚛 <b>Mashina raqami:</b> <code>{safe_html(d_plate)}</code>\n"
@@ -4758,7 +4780,7 @@ def handle_callback(cb):
 
         confirm_text = (
             f"⚠️ <b>HAYDOVCHINI O‘CHIRISHNI TASDIQLANG:</b>\n\n"
-            f"👤 <b>I.F:</b> {safe_html(d_name)}\n"
+            f"👤 <b>Ism va familiya:</b> {safe_html(d_name)}\n"
             f"🆔 <b>Maxsus ID:</b> <code>{safe_html(d_id)}</code>\n"
             f"📱 <b>Telefon:</b> <code>{safe_html(phone_to_del)}</code>\n"
             f"🚛 <b>Mashina raqami:</b> <code>{safe_html(d_plate)}</code>\n\n"
@@ -5267,7 +5289,7 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
-                self.wfile.write(json.dumps({"status": "ok", "driver_state": drv_state}).encode("utf-8"))
+                self.wfile.write(json.dumps({"status": "ok", "driver_name": drv_state["driver_name"], "driver_state": drv_state}).encode("utf-8"))
                 return
             except Exception as _e:
                 self.send_response(200)
@@ -5316,6 +5338,26 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
                 self.wfile.write(json.dumps({"status": "error", "avatar_url": ""}).encode("utf-8"))
+            return
+
+        if self.path.startswith("/api/user/get-home-coords"):
+            try:
+                from urllib.parse import urlparse, parse_qs
+                parsed = urlparse(self.path)
+                qs = parse_qs(parsed.query)
+                q_phone = qs.get("phone", [""])[0].strip()
+                coords = db_manager.get_user_home_coords(q_phone)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": True, "coords": coords}).encode("utf-8"))
+            except Exception as e:
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": False, "coords": None}).encode("utf-8"))
             return
 
         if self.path.startswith("/api/app-version"):
@@ -5426,6 +5468,59 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
                 self.wfile.write(json.dumps({"status": "error", "message": str(e)}).encode("utf-8"))
+                return
+
+        if self.path == "/api/driver/delete-avatar":
+            try:
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                body = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
+                data = json.loads(body)
+                phone = str(data.get("phone", "")).strip()
+                db_manager.delete_driver_avatar(phone)
+                clean_full = re.sub(r'\D', '', phone)
+                clean_short = clean_full[-9:] if len(clean_full) >= 9 else clean_full
+                if clean_full in active_driver_states:
+                    active_driver_states[clean_full]["avatar_url"] = ""
+                if clean_short in active_driver_states:
+                    active_driver_states[clean_short]["avatar_url"] = ""
+                if current_driver_state.get("driver_phone") == phone:
+                    current_driver_state["avatar_url"] = ""
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": True}).encode("utf-8"))
+                return
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
+                return
+
+        if self.path == "/api/user/save-home-coords":
+            try:
+                length = int(self.headers.get("Content-Length", 0) or 0)
+                body = self.rfile.read(length).decode("utf-8") if length > 0 else "{}"
+                data = json.loads(body)
+                phone = str(data.get("phone", "")).strip()
+                lat = data.get("lat")
+                lng = data.get("lng")
+                if lat is not None and lng is not None:
+                    db_manager.save_user_home_coords(phone, float(lat), float(lng))
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": True}).encode("utf-8"))
+                return
+            except Exception as e:
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode("utf-8"))
                 return
 
         if self.path == "/api/auth/2fa-forgot-request":
@@ -7009,6 +7104,252 @@ def generate_users_excel_csv(region=None, district=None, mfy=None, street=None):
 
 # Alias
 generate_users_excel = generate_users_excel_csv
+
+
+def build_drivers_pure_xlsx(filepath, title, subtitle, headers, rows):
+    import zipfile, xml.sax.saxutils
+
+    def esc(s):
+        return xml.sax.saxutils.escape(str(s if s is not None else ''))
+
+    content_types = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+</Types>'''
+
+    pkg_rels = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>'''
+
+    wb_xml = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>
+    <sheet name="Haydovchilar royxati" sheetId="1" r:id="rId1"/>
+  </sheets>
+</workbook>'''
+
+    wb_rels = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>'''
+
+    styles_xml = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <fonts count="4">
+    <font><name val="Calibri"/><sz val="11"/></font>
+    <font><name val="Calibri"/><sz val="13"/><b/><color rgb="FFFFFFFF"/></font>
+    <font><name val="Calibri"/><sz val="10"/><i/><color rgb="FF475569"/></font>
+    <font><name val="Calibri"/><sz val="11"/><b/><color rgb="FFFFFFFF"/></font>
+  </fonts>
+  <fills count="5">
+    <fill><patternFill patternType="none"/></fill>
+    <fill><patternFill patternType="gray125"/></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FF1E3A8A"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FF2563EB"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FFF8FAFC"/></patternFill></fill>
+  </fills>
+  <borders count="2">
+    <border><left/><right/><top/><bottom/><diagonal/></border>
+    <border>
+      <left style="thin"><color rgb="FFCBD5E1"/></left>
+      <right style="thin"><color rgb="FFCBD5E1"/></right>
+      <top style="thin"><color rgb="FFCBD5E1"/></top>
+      <bottom style="thin"><color rgb="FFCBD5E1"/></bottom>
+    </border>
+  </borders>
+  <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+  <cellXfs count="8">
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+    <xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+    <xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+    <xf numFmtId="0" fontId="3" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>
+    <xf numFmtId="0" fontId="0" fillId="4" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+    <xf numFmtId="0" fontId="0" fillId="4" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+  </cellXfs>
+</styleSheet>'''
+
+    col_letters = ['A', 'B', 'C', 'D', 'E', 'F']
+    col_widths = [6, 16, 32, 20, 18, 22]
+    sheet_lines = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+                   '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">',
+                   '<sheetViews><sheetView tabSelected="1" workbookViewId="0" showGridLines="1"/></sheetViews>',
+                   '<cols>']
+    for ci, w in enumerate(col_widths, 1):
+        sheet_lines.append(f'<col min="{ci}" max="{ci}" width="{w}" customWidth="1"/>')
+    sheet_lines.append('</cols>')
+    sheet_lines.append('<sheetData>')
+
+    # Row 1: Title
+    sheet_lines.append(f'<row r="1" ht="36" customHeight="1"><c r="A1" s="1" t="inlineStr"><is><t>{esc(title)}</t></is></c></row>')
+    # Row 2: Subtitle
+    sheet_lines.append(f'<row r="2" ht="20" customHeight="1"><c r="A2" s="2" t="inlineStr"><is><t>{esc(subtitle)}</t></is></c></row>')
+    # Row 3: empty
+    sheet_lines.append('<row r="3" ht="8" customHeight="1"/>')
+
+    # Row 4: Headers
+    h_cells = []
+    for ci, h in enumerate(headers):
+        ref = f'{col_letters[ci]}4'
+        h_cells.append(f'<c r="{ref}" s="3" t="inlineStr"><is><t>{esc(h)}</t></is></c>')
+    sheet_lines.append('<row r="4" ht="28" customHeight="1">' + ''.join(h_cells) + '</row>')
+
+    # Rows
+    if rows:
+        for ri, r in enumerate(rows, 5):
+            is_alt = (ri % 2 == 0)
+            r_cells = []
+            for ci, val in enumerate(r):
+                ref = f'{col_letters[ci]}{ri}'
+                is_centered = ci in (0, 1, 3, 4, 5)
+                s_idx = ('7' if is_alt else '6') if is_centered else ('5' if is_alt else '4')
+                r_cells.append(f'<c r="{ref}" s="{s_idx}" t="inlineStr"><is><t>{esc(val)}</t></is></c>')
+            sheet_lines.append(f'<row r="{ri}" ht="22" customHeight="1">' + ''.join(r_cells) + '</row>')
+    else:
+        sheet_lines.append('<row r="5" ht="26" customHeight="1"><c r="A5" s="2" t="inlineStr"><is><t>Hozircha tizimda haydovchilar mavjud emas.</t></is></c></row>')
+
+    sheet_lines.append('</sheetData>')
+    sheet_lines.append('<mergeCells count="2">')
+    sheet_lines.append('<mergeCell ref="A1:F1"/>')
+    sheet_lines.append('<mergeCell ref="A2:F2"/>')
+    if not rows:
+        sheet_lines.append('<mergeCell ref="A5:F5"/>')
+    sheet_lines.append('</mergeCells>')
+    sheet_lines.append('</worksheet>')
+    sheet1_xml = '\n'.join(sheet_lines)
+
+    with zipfile.ZipFile(filepath, 'w', zipfile.ZIP_DEFLATED) as z:
+        z.writestr('[Content_Types].xml', content_types)
+        z.writestr('_rels/.rels', pkg_rels)
+        z.writestr('xl/workbook.xml', wb_xml)
+        z.writestr('xl/_rels/workbook.xml.rels', wb_rels)
+        z.writestr('xl/styles.xml', styles_xml)
+        z.writestr('xl/worksheets/sheet1.xml', sheet1_xml)
+
+    return filepath
+
+
+def generate_drivers_excel():
+    drivers = db_manager.get_all_drivers()
+    ts = get_uzb_time_str("%Y%m%d_%H%M%S")
+    tfile = os.path.join(tempfile.gettempdir(), f"Haydovchilar_royxati_{ts}.xlsx")
+
+    title_text = "«XONADON+» TIZIMI — TIZIMDAGI BARCHA HAYDOVCHILAR RO‘YXATI"
+    subtitle_text = f"Jami haydovchilar soni: {len(drivers)} nafar | Shakllantirilgan sana: {get_uzb_time_str('%d.%m.%Y %H:%M')}"
+    headers = [
+        "№",
+        "Maxsus ID",
+        "Haydovchining ism-familiyasi",
+        "Telefon raqami",
+        "Davlat raqami",
+        "Ro‘yxatdan o‘tgan sana"
+    ]
+
+    prepared_rows = []
+    for idx, d in enumerate(drivers, 1):
+        d_id = d.get("account_id") or f"HP-{100000 + d.get('id', idx)}"
+        fname = d.get("full_name") or "Noma'lum"
+        phone = d.get("phone") or ""
+        plate = d.get("truck_plate") or "Biriktirilmagan"
+        created_dt = format_uzb_timestamp(d.get("created_at"))
+        prepared_rows.append([idx, d_id, fname, phone, plate, created_dt])
+
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Haydovchilar ro‘yxati"
+        ws.views.sheetView[0].showGridLines = True
+
+        # 1-qator: Sarlavha banneri
+        ws.merge_cells("A1:F1")
+        t_cell = ws["A1"]
+        t_cell.value = title_text
+        t_cell.font = Font(name="Calibri", size=13, bold=True, color="FFFFFF")
+        t_cell.fill = PatternFill(start_color="1E3A8A", end_color="1E3A8A", fill_type="solid")
+        t_cell.alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[1].height = 36
+
+        # 2-qator: Sana va statistika
+        ws.merge_cells("A2:F2")
+        s_cell = ws["A2"]
+        s_cell.value = subtitle_text
+        s_cell.font = Font(name="Calibri", size=10, italic=True, color="475569")
+        s_cell.alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[2].height = 20
+
+        ws.row_dimensions[3].height = 8
+        ws.append([])
+        ws.append(headers)
+        ws.row_dimensions[4].height = 28
+
+        h_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+        h_fill = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")
+        thin = Side(style="thin", color="CBD5E1")
+        border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+        for c_idx in range(1, len(headers) + 1):
+            c = ws.cell(row=4, column=c_idx)
+            c.font = h_font
+            c.fill = h_fill
+            c.alignment = Alignment(horizontal="center", vertical="center")
+            c.border = border
+
+        alt_fill = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
+        white_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+
+        row_idx = 5
+        if prepared_rows:
+            for idx, r_data in enumerate(prepared_rows, 1):
+                ws.append(r_data)
+                ws.row_dimensions[row_idx].height = 22
+                r_fill = alt_fill if idx % 2 == 0 else white_fill
+                for c_idx in range(1, len(r_data) + 1):
+                    c = ws.cell(row=row_idx, column=c_idx)
+                    c.font = Font(name="Calibri", size=10)
+                    c.fill = r_fill
+                    c.border = border
+                    if c_idx in (1, 2, 4, 5, 6):
+                        c.alignment = Alignment(horizontal="center", vertical="center")
+                    else:
+                        c.alignment = Alignment(horizontal="left", vertical="center")
+                row_idx += 1
+        else:
+            ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=6)
+            c = ws.cell(row=row_idx, column=1)
+            c.value = "Hozircha tizimda ro‘yxatdan o‘tgan haydovchilar mavjud emas."
+            c.font = Font(name="Calibri", size=10, italic=True, color="64748B")
+            c.alignment = Alignment(horizontal="center", vertical="center")
+            ws.row_dimensions[row_idx].height = 26
+
+        for col in ws.columns:
+            max_len = 0
+            col_letter = get_column_letter(col[0].column)
+            for cell in col:
+                if cell.row in (1, 2):
+                    continue
+                v = str(cell.value or "")
+                if len(v) > max_len:
+                    max_len = len(v)
+            ws.column_dimensions[col_letter].width = max(max_len + 3, 10)
+
+        wb.save(tfile)
+        return tfile
+
+    except Exception as e_xlsx:
+        print(f"[OPENPYXL FOR DRIVERS NOT AVAILABLE, USING PURE PYTHON XLSX]: {e_xlsx}")
+        build_drivers_pure_xlsx(tfile, title_text, subtitle_text, headers, prepared_rows)
+        return tfile
 
 
 if __name__ == "__main__":

@@ -31,7 +31,9 @@ def ensure_db_columns():
         ("drivers", "account_id", "TEXT DEFAULT ''"),
         ("driver_live", "avatar_url", "TEXT DEFAULT ''"),
         ("users", "avatar_url", "TEXT DEFAULT ''"),
-        ("users", "account_id", "TEXT DEFAULT ''")
+        ("users", "account_id", "TEXT DEFAULT ''"),
+        ("users", "home_lat", "REAL DEFAULT NULL"),
+        ("users", "home_lng", "REAL DEFAULT NULL")
     ]
     for table, col, col_type in migrations:
         try:
@@ -40,6 +42,53 @@ def ensure_db_columns():
             pass
     conn.commit()
     conn.close()
+
+
+def save_user_home_coords(phone, lat, lng):
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+        digits = re.sub(r'\D', '', str(phone or ''))
+        last9 = digits[-9:] if len(digits) >= 9 else digits
+        c.execute("UPDATE users SET home_lat = ?, home_lng = ? WHERE phone LIKE ?", (lat, lng, f"%{last9}%"))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Error save_user_home_coords: {e}")
+        return False
+
+
+def get_user_home_coords(phone):
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+        digits = re.sub(r'\D', '', str(phone or ''))
+        last9 = digits[-9:] if len(digits) >= 9 else digits
+        c.execute("SELECT home_lat, home_lng FROM users WHERE phone LIKE ?", (f"%{last9}%",))
+        row = c.fetchone()
+        conn.close()
+        if row and row["home_lat"] is not None and row["home_lng"] is not None:
+            return {"lat": float(row["home_lat"]), "lng": float(row["home_lng"])}
+        return None
+    except Exception:
+        return None
+
+
+def delete_driver_avatar(phone):
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+        digits = re.sub(r'\D', '', str(phone or ''))
+        last9 = digits[-9:] if len(digits) >= 9 else digits
+        c.execute("UPDATE drivers SET avatar_url = '' WHERE phone LIKE ?", (f"%{last9}%",))
+        c.execute("UPDATE driver_live SET avatar_url = '' WHERE phone LIKE ?", (f"%{last9}%",))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Error delete_driver_avatar: {e}")
+        return False
 
 def ensure_uzb_timezone_migration():
     """Bazada avval saqlangan barcha UTC vaqtlarini bir marta O'zbekiston (UTC+5) vaqtiga ko'chirish"""
