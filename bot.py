@@ -2515,9 +2515,10 @@ def send_document(chat_id, file_path, caption="", parse_mode="HTML"):
                 lines.append(parse_mode.encode())
 
         fname = os.path.basename(file_path)
+        mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" if fname.endswith(".xlsx") else "text/csv; charset=utf-8"
         lines.append(f"--{boundary}".encode())
         lines.append(f'Content-Disposition: form-data; name="document"; filename="{fname}"'.encode("utf-8"))
-        lines.append(b"Content-Type: text/csv; charset=utf-8")
+        lines.append(f"Content-Type: {mime}".encode("utf-8"))
         lines.append(b"")
         with open(file_path, "rb") as f:
             file_data = f.read()
@@ -4344,7 +4345,7 @@ def handle_callback(cb):
         send_document(
             chat_id,
             fpath,
-            caption="📊 <b>O‘zbekiston Respublikasi bo‘yicha to‘liq aholi ro‘yxati (Excel/CSV)</b>\n\nKo‘chama-ko‘cha sarlavhalar bilan to‘liq shakllantirildi ✅"
+            caption="📊 <b>O‘zbekiston Respublikasi aholi ro‘yxati (Excel jadvali)</b>\n\nBarcha ma’lumotlar alohida ustunlarda to‘liq tartiblandi ✅"
         )
         try: os.remove(fpath)
         except: pass
@@ -4382,9 +4383,9 @@ def handle_callback(cb):
         _, scope, reg_k = data.split(":")
         reg_title = ADDRESS_DB[reg_k]['name']
         if scope == "region":
-            send_message(chat_id, f"⏳ <i>{reg_title} bo‘yicha fayl shakllantirilmoqda...</i>", parse_mode="HTML")
+            send_message(chat_id, f"⏳ <i>{safe_html(reg_title)} bo‘yicha fayl shakllantirilmoqda...</i>", parse_mode="HTML")
             fpath = generate_users_excel_csv(region=reg_k)
-            send_document(chat_id, fpath, caption=f"📊 <b>{reg_title} aholi ro‘yxati (Excel fayl yuklandi ✅)</b>")
+            send_document(chat_id, fpath, caption=f"📊 <b>{safe_html(reg_title)} aholi ro‘yxati (Excel jadvali)</b>\n\nBarcha ma’lumotlar alohida ustunlarda to‘liq tartiblandi ✅")
             try: os.remove(fpath)
             except: pass
             return
@@ -4400,16 +4401,16 @@ def handle_callback(cb):
             if row:
                 buttons.append(row)
             buttons.append([{"text": "⬅️ Orqaga", "callback_data": f"exp_scope:{scope}"}])
-            send_message(chat_id, f"🏙 <b>{ADDRESS_DB[reg_k]['name']} — Tumanni tanlang:</b>", reply_markup={"inline_keyboard": buttons}, parse_mode="HTML")
+            send_message(chat_id, f"🏙 <b>{safe_html(ADDRESS_DB[reg_k]['name'])} — Tumanni tanlang:</b>", reply_markup={"inline_keyboard": buttons}, parse_mode="HTML")
             return
 
     if data.startswith("expdist:"):
         _, scope, reg_k, dist_k = data.split(":")
         dist_name = ADDRESS_DB[reg_k]["districts"][dist_k]["name"]
         if scope == "district":
-            send_message(chat_id, f"⏳ <i>{dist_name} bo‘yicha fayl shakllantirilmoqda...</i>", parse_mode="HTML")
+            send_message(chat_id, f"⏳ <i>{safe_html(dist_name)} bo‘yicha fayl shakllantirilmoqda...</i>", parse_mode="HTML")
             fpath = generate_users_excel_csv(region=reg_k, district=dist_k)
-            send_document(chat_id, fpath, caption=f"📊 <b>{dist_name} aholi ro‘yxati (Excel fayl yuklandi ✅)</b>")
+            send_document(chat_id, fpath, caption=f"📊 <b>{safe_html(dist_name)} aholi ro‘yxati (Excel jadvali)</b>\n\nBarcha ma’lumotlar alohida ustunlarda to‘liq tartiblandi ✅")
             try: os.remove(fpath)
             except: pass
             return
@@ -4425,7 +4426,7 @@ def handle_callback(cb):
             if row:
                 buttons.append(row)
             buttons.append([{"text": "⬅️ Orqaga", "callback_data": f"expreg:{scope}:{reg_k}"}])
-            send_message(chat_id, f"🏘 <b>{dist_name} — Mahalla (MFY)ni tanlang:</b>", reply_markup={"inline_keyboard": buttons}, parse_mode="HTML")
+            send_message(chat_id, f"🏘 <b>{safe_html(dist_name)} — Mahalla (MFY)ni tanlang:</b>", reply_markup={"inline_keyboard": buttons}, parse_mode="HTML")
             return
 
     if data.startswith("expmfy:"):
@@ -4433,9 +4434,9 @@ def handle_callback(cb):
         mfy_name = ADDRESS_DB[reg_k]["districts"][dist_k]["mfys"][mfy_k]["name"]
         clean_mfy_label = mfy_name if "MFY" in mfy_name else f"«{mfy_name}» MFY"
         if scope == "mfy":
-            send_message(chat_id, f"⏳ <i>{clean_mfy_label} bo‘yicha fayl shakllantirilmoqda...</i>", parse_mode="HTML")
+            send_message(chat_id, f"⏳ <i>{safe_html(clean_mfy_label)} bo‘yicha fayl shakllantirilmoqda...</i>", parse_mode="HTML")
             fpath = generate_users_excel_csv(region=reg_k, district=dist_k, mfy=mfy_k)
-            send_document(chat_id, fpath, caption=f"📊 <b>{clean_mfy_label} aholi ro‘yxati (Excel fayl yuklandi ✅)</b>")
+            send_document(chat_id, fpath, caption=f"📊 <b>{safe_html(clean_mfy_label)} aholi ro‘yxati (Excel jadvali)</b>\n\nBarcha ma’lumotlar alohida ustunlarda to‘liq tartiblandi ✅")
             try: os.remove(fpath)
             except: pass
             return
@@ -4451,15 +4452,15 @@ def handle_callback(cb):
             if row:
                 buttons.append(row)
             buttons.append([{"text": "⬅️ Orqaga", "callback_data": f"expdist:{scope}:{reg_k}:{dist_k}"}])
-            send_message(chat_id, f"🛣 <b>{clean_mfy_label} — Ko‘chani tanlang:</b>", reply_markup={"inline_keyboard": buttons}, parse_mode="HTML")
+            send_message(chat_id, f"🛣 <b>{safe_html(clean_mfy_label)} — Ko‘chani tanlang:</b>", reply_markup={"inline_keyboard": buttons}, parse_mode="HTML")
             return
 
     if data.startswith("expst:"):
         _, reg_k, dist_k, mfy_k, st_k = data.split(":")
         st_name = ADDRESS_DB[reg_k]["districts"][dist_k]["mfys"][mfy_k]["streets"][st_k]
-        send_message(chat_id, f"⏳ <i>{st_name} bo‘yicha fayl shakllantirilmoqda...</i>", parse_mode="HTML")
+        send_message(chat_id, f"⏳ <i>{safe_html(st_name)} bo‘yicha fayl shakllantirilmoqda...</i>", parse_mode="HTML")
         fpath = generate_users_excel_csv(region=reg_k, district=dist_k, mfy=mfy_k, street=st_k)
-        send_document(chat_id, fpath, caption=f"📊 <b>{st_name} aholi ro‘yxati (Excel fayl yuklandi ✅)</b>")
+        send_document(chat_id, fpath, caption=f"📊 <b>{safe_html(st_name)} aholi ro‘yxati (Excel jadvali)</b>\n\nBarcha ma’lumotlar alohida ustunlarda to‘liq tartiblandi ✅")
         try: os.remove(fpath)
         except: pass
         return
@@ -6607,13 +6608,144 @@ def run_telegram_polling():
             time.sleep(2)
 
 
+def build_pure_xlsx(filepath, title, subtitle, headers, rows):
+    import zipfile, xml.sax.saxutils
+
+    def esc(s):
+        return xml.sax.saxutils.escape(str(s if s is not None else ''))
+
+    content_types = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+</Types>'''
+
+    pkg_rels = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>'''
+
+    wb_xml = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>
+    <sheet name="Aholi royxati" sheetId="1" r:id="rId1"/>
+  </sheets>
+</workbook>'''
+
+    wb_rels = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>'''
+
+    styles_xml = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <fonts count="4">
+    <font><name val="Calibri"/><sz val="11"/></font>
+    <font><name val="Calibri"/><sz val="13"/><b/><color rgb="FFFFFFFF"/></font>
+    <font><name val="Calibri"/><sz val="10"/><i/><color rgb="FF475569"/></font>
+    <font><name val="Calibri"/><sz val="11"/><b/><color rgb="FFFFFFFF"/></font>
+  </fonts>
+  <fills count="5">
+    <fill><patternFill patternType="none"/></fill>
+    <fill><patternFill patternType="gray125"/></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FF1E3A8A"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FF2563EB"/></patternFill></fill>
+    <fill><patternFill patternType="solid"><fgColor rgb="FFF8FAFC"/></patternFill></fill>
+  </fills>
+  <borders count="2">
+    <border><left/><right/><top/><bottom/><diagonal/></border>
+    <border>
+      <left style="thin"><color rgb="FFCBD5E1"/></left>
+      <right style="thin"><color rgb="FFCBD5E1"/></right>
+      <top style="thin"><color rgb="FFCBD5E1"/></top>
+      <bottom style="thin"><color rgb="FFCBD5E1"/></bottom>
+    </border>
+  </borders>
+  <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+  <cellXfs count="8">
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+    <xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+    <xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+    <xf numFmtId="0" fontId="3" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>
+    <xf numFmtId="0" fontId="0" fillId="4" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>
+    <xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+    <xf numFmtId="0" fontId="0" fillId="4" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
+  </cellXfs>
+</styleSheet>'''
+
+    col_letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I']
+    col_widths = [6, 14, 25, 20, 22, 20, 22, 28, 18]
+    sheet_lines = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+                   '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">',
+                   '<sheetViews><sheetView tabSelected="1" workbookViewId="0" showGridLines="1"/></sheetViews>',
+                   '<cols>']
+    for ci, w in enumerate(col_widths, 1):
+        sheet_lines.append(f'<col min="{ci}" max="{ci}" width="{w}" customWidth="1"/>')
+    sheet_lines.append('</cols>')
+    sheet_lines.append('<sheetData>')
+
+    # Row 1: Title
+    sheet_lines.append(f'<row r="1" ht="36" customHeight="1"><c r="A1" s="1" t="inlineStr"><is><t>{esc(title)}</t></is></c></row>')
+    # Row 2: Subtitle
+    sheet_lines.append(f'<row r="2" ht="20" customHeight="1"><c r="A2" s="2" t="inlineStr"><is><t>{esc(subtitle)}</t></is></c></row>')
+    # Row 3: empty
+    sheet_lines.append('<row r="3" ht="8" customHeight="1"/>')
+
+    # Row 4: Headers
+    h_cells = []
+    for ci, h in enumerate(headers):
+        ref = f'{col_letters[ci]}4'
+        h_cells.append(f'<c r="{ref}" s="3" t="inlineStr"><is><t>{esc(h)}</t></is></c>')
+    sheet_lines.append('<row r="4" ht="28" customHeight="1">' + ''.join(h_cells) + '</row>')
+
+    # Rows
+    if rows:
+        for ri, r in enumerate(rows, 5):
+            is_alt = (ri % 2 == 0)
+            r_cells = []
+            for ci, val in enumerate(r):
+                ref = f'{col_letters[ci]}{ri}'
+                is_centered = ci in (0, 1, 3, 8)
+                s_idx = ('7' if is_alt else '6') if is_centered else ('5' if is_alt else '4')
+                r_cells.append(f'<c r="{ref}" s="{s_idx}" t="inlineStr"><is><t>{esc(val)}</t></is></c>')
+            sheet_lines.append(f'<row r="{ri}" ht="22" customHeight="1">' + ''.join(r_cells) + '</row>')
+    else:
+        sheet_lines.append('<row r="5" ht="26" customHeight="1"><c r="A5" s="2" t="inlineStr"><is><t>Hozircha ushbu hudud bo‘yicha ro‘yxatdan o‘tgan fuqarolar mavjud emas.</t></is></c></row>')
+
+    sheet_lines.append('</sheetData>')
+    sheet_lines.append('<mergeCells count="2">')
+    sheet_lines.append('<mergeCell ref="A1:I1"/>')
+    sheet_lines.append('<mergeCell ref="A2:I2"/>')
+    if not rows:
+        sheet_lines.append('<mergeCell ref="A5:I5"/>')
+    sheet_lines.append('</mergeCells>')
+    sheet_lines.append('</worksheet>')
+    sheet1_xml = '\n'.join(sheet_lines)
+
+    with zipfile.ZipFile(filepath, 'w', zipfile.ZIP_DEFLATED) as z:
+        z.writestr('[Content_Types].xml', content_types)
+        z.writestr('_rels/.rels', pkg_rels)
+        z.writestr('xl/workbook.xml', wb_xml)
+        z.writestr('xl/_rels/workbook.xml.rels', wb_rels)
+        z.writestr('xl/styles.xml', styles_xml)
+        z.writestr('xl/worksheets/sheet1.xml', sheet1_xml)
+
+    return filepath
+
+
 def generate_users_excel_csv(region=None, district=None, mfy=None, street=None):
     users = db_manager.get_filtered_users(region=region, district=district, mfy=mfy, street=street)
 
     # Determine descriptive title for the header
     reg_name = ADDRESS_DB.get(region, {}).get("name", region or "O‘ZBEKISTON RESPUBLIKASI").upper()
     dist_name = ADDRESS_DB.get(region, {}).get("districts", {}).get(district, {}).get("name", district or "").upper()
-    mfy_name = ADDRESS_DB.get(region, {}).get("districts", {}).get(district, {}).get("mfys", {}).get(mfy, {}).get("name", mfy or "")
+    raw_mfy = ADDRESS_DB.get(region, {}).get("districts", {}).get(district, {}).get("mfys", {}).get(mfy, {}).get("name", mfy or "")
+    mfy_name = raw_mfy if ("MFY" in raw_mfy or not raw_mfy) else f"«{raw_mfy}» MFY"
     st_name = ADDRESS_DB.get(region, {}).get("districts", {}).get(district, {}).get("mfys", {}).get(mfy, {}).get("streets", {}).get(street, street or "")
 
     title_parts = [reg_name]
@@ -6630,39 +6762,141 @@ def generate_users_excel_csv(region=None, district=None, mfy=None, street=None):
     safe_file_suffix = re.sub(r'[^a-zA-Z0-9_]', '_', file_suffix)
 
     import tempfile
-    tfile = os.path.join(tempfile.gettempdir(), f"Aholi_royxati_{safe_file_suffix}_{int(time.time())}.csv")
+    cur_time_str = time.strftime("%d.%m.%Y %H:%M")
+    tfile = os.path.join(tempfile.gettempdir(), f"Aholi_royxati_{safe_file_suffix}_{int(time.time())}.xlsx")
 
-    with open(tfile, "w", encoding="utf-8-sig") as f:
-        f.write("=" * 100 + "\n")
-        f.write(f"📍 {full_title}\n")
-        f.write("=" * 100 + "\n")
-        f.write("№,Maxsus ID,Ism va Familiya,Telefon raqami,Ro‘yxatdan o‘tgan to‘liq manzili\n")
+    headers = [
+        "№",
+        "Maxsus ID",
+        "Fuqaroning F.I.SH",
+        "Telefon raqami",
+        "Viloyat",
+        "Tuman",
+        "Mahalla (MFY)",
+        "Ko‘cha",
+        "Ro‘yxatdan o‘tgan sana"
+    ]
 
-        if users:
-            counter = 1
-            for u in users:
-                acc_id = u.get("account_id") or "XP-104928"
-                fname = u.get("full_name") or "Fuqaro"
-                phone = u.get("phone") or "+998912345678"
-                
-                u_reg = u.get("region") or region or "qashqadaryo"
-                u_dist = u.get("district") or district or "nishon"
-                u_mfy = u.get("mfy") or mfy or "koksoy"
-                u_st = u.get("street") or street or "koksoy_markaziy"
-                
-                u_rn = ADDRESS_DB.get(u_reg, {}).get("name", u_reg)
-                u_dn = ADDRESS_DB.get(u_reg, {}).get("districts", {}).get(u_dist, {}).get("name", u_dist)
-                u_mn = ADDRESS_DB.get(u_reg, {}).get("districts", {}).get(u_dist, {}).get("mfys", {}).get(u_mfy, {}).get("name", u_mfy)
-                u_sn = ADDRESS_DB.get(u_reg, {}).get("districts", {}).get(u_dist, {}).get("mfys", {}).get(u_mfy, {}).get("streets", {}).get(u_st, u_st)
-                
-                full_addr = f"{u_rn}, {u_dn}, {u_mn}, {u_sn}"
-                f.write(f'{counter},{acc_id},"{fname}",{phone},"{full_addr}"\n')
-                counter += 1
+    title_text = f"🏛 {full_title.upper()}"
+    subtitle_text = f"Xonadon+ Tizimi | Jami fuqarolar: {len(users)} nafar | Shakllantirilgan vaqt: {cur_time_str}"
+
+    prepared_rows = []
+    if users:
+        for idx, u in enumerate(users, 1):
+            acc_id = u.get("account_id") or "XP-104928"
+            fname = u.get("full_name") or "Fuqaro"
+            phone = u.get("phone") or "+998912345678"
+
+            u_reg = u.get("region") or region or "qashqadaryo"
+            u_dist = u.get("district") or district or "nishon"
+            u_mfy = u.get("mfy") or mfy or "koksoy"
+            u_st = u.get("street") or street or "koksoy_markaziy"
+
+            u_rn = ADDRESS_DB.get(u_reg, {}).get("name", u_reg)
+            u_dn = ADDRESS_DB.get(u_reg, {}).get("districts", {}).get(u_dist, {}).get("name", u_dist)
+            raw_u_mn = ADDRESS_DB.get(u_reg, {}).get("districts", {}).get(u_dist, {}).get("mfys", {}).get(u_mfy, {}).get("name", u_mfy)
+            u_mn = raw_u_mn if ("MFY" in raw_u_mn or not raw_u_mn) else f"«{raw_u_mn}» MFY"
+            u_sn = ADDRESS_DB.get(u_reg, {}).get("districts", {}).get(u_dist, {}).get("mfys", {}).get(u_mfy, {}).get("streets", {}).get(u_st, u_st)
+            created_dt = str(u.get("created_at") or "")[:16]
+
+            prepared_rows.append([idx, acc_id, fname, phone, u_rn, u_dn, u_mn, u_sn, created_dt])
+
+    # 1. Openpyxl yordamida yaratishga urinish
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Aholi ro‘yxati"
+        ws.views.sheetView[0].showGridLines = True
+
+        # 1-qator: Katta sarlavha banneri
+        ws.merge_cells("A1:I1")
+        t_cell = ws["A1"]
+        t_cell.value = title_text
+        t_cell.font = Font(name="Calibri", size=13, bold=True, color="FFFFFF")
+        t_cell.fill = PatternFill(start_color="1E3A8A", end_color="1E3A8A", fill_type="solid")
+        t_cell.alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[1].height = 36
+
+        # 2-qator: Qo'shimcha statistika va sana
+        ws.merge_cells("A2:I2")
+        s_cell = ws["A2"]
+        s_cell.value = subtitle_text
+        s_cell.font = Font(name="Calibri", size=10, italic=True, color="475569")
+        s_cell.alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[2].height = 20
+
+        ws.row_dimensions[3].height = 8
+        ws.append([]) # 3-qator bo'sh joy
+        ws.append(headers) # 4-qator ustun nomlari
+        ws.row_dimensions[4].height = 28
+
+        h_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+        h_fill = PatternFill(start_color="2563EB", end_color="2563EB", fill_type="solid")
+        thin = Side(style="thin", color="CBD5E1")
+        border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+        for c_idx in range(1, len(headers) + 1):
+            c = ws.cell(row=4, column=c_idx)
+            c.font = h_font
+            c.fill = h_fill
+            c.alignment = Alignment(horizontal="center", vertical="center")
+            c.border = border
+
+        alt_fill = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
+        white_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+
+        row_idx = 5
+        if prepared_rows:
+            for idx, r_data in enumerate(prepared_rows, 1):
+                ws.append(r_data)
+                ws.row_dimensions[row_idx].height = 22
+                r_fill = alt_fill if idx % 2 == 0 else white_fill
+                for c_idx in range(1, len(r_data) + 1):
+                    c = ws.cell(row=row_idx, column=c_idx)
+                    c.font = Font(name="Calibri", size=10)
+                    c.fill = r_fill
+                    c.border = border
+                    if c_idx in (1, 2, 4, 9):
+                        c.alignment = Alignment(horizontal="center", vertical="center")
+                    else:
+                        c.alignment = Alignment(horizontal="left", vertical="center")
+                row_idx += 1
         else:
-            f.write("1,-,Hozircha ushbu hududda ro‘yxatdan o‘tgan fuqarolar mavjud emas,-,-\n")
-        f.write("\n")
+            ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=9)
+            c = ws.cell(row=row_idx, column=1)
+            c.value = "Hozircha ushbu hudud bo‘yicha ro‘yxatdan o‘tgan fuqarolar mavjud emas."
+            c.font = Font(name="Calibri", size=10, italic=True, color="64748B")
+            c.alignment = Alignment(horizontal="center", vertical="center")
+            ws.row_dimensions[row_idx].height = 26
 
-    return tfile
+        # Ustunlar kengligini matnga moslab avtomatik kengaytirish
+        for col in ws.columns:
+            max_len = 0
+            col_letter = get_column_letter(col[0].column)
+            for cell in col:
+                if cell.row in (1, 2):
+                    continue
+                v = str(cell.value or "")
+                if len(v) > max_len:
+                    max_len = len(v)
+            ws.column_dimensions[col_letter].width = max(max_len + 3, 10)
+
+        wb.save(tfile)
+        return tfile
+
+    except Exception as e_xlsx:
+        print(f"[OPENPYXL NOT AVAILABLE, USING PURE PYTHON XLSX]: {e_xlsx}")
+        # 100% kafolatlangan pure-python .xlsx generator (HECH QACHON .csv bo'lmaydi)
+        build_pure_xlsx(tfile, title_text, subtitle_text, headers, prepared_rows)
+        return tfile
+
+
+# Alias
+generate_users_excel = generate_users_excel_csv
 
 
 if __name__ == "__main__":
