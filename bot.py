@@ -2532,30 +2532,6 @@ def send_document(chat_id, file_path, caption="", parse_mode="HTML"):
         print(f"Error in send_document: {e}")
         return None
 
-def send_driver_card(target_chat_id, d):
-    d_name = d.get('full_name', '')
-    d_id = d.get('account_id') or 'HP-100000'
-    d_phone = d.get('phone', '')
-    d_plate = d.get('truck_plate', '')
-    d_pass = d.get('password', '')
-
-    card = (
-        f"👤 <b>I.F:</b> {safe_html(d_name)}\n"
-        f"🆔 <b>Maxsus ID:</b> <code>{safe_html(d_id)}</code>\n"
-        f"📱 <b>Telefon (Login):</b> <code>{safe_html(d_phone)}</code>\n"
-        f"🚛 <b>Mashina raqami:</b> <code>{safe_html(d_plate)}</code>\n"
-        f"🔑 <b>Kirish paroli:</b> <code>{safe_html(d_pass)}</code>"
-    )
-    inline_kb = {
-        "inline_keyboard": [
-            [
-                {"text": "✏️ Tahrirlash", "callback_data": f"edtdrv_{d_phone}"},
-                {"text": "❌ O‘chirish", "callback_data": f"deldriver_{d_phone}"}
-            ]
-        ]
-    }
-    send_message(target_chat_id, card, reply_markup=inline_kb, parse_mode="HTML")
-
 def send_message(chat_id, text, reply_markup=None, parse_mode="HTML"):
     payload = {
         "chat_id": chat_id,
@@ -2573,6 +2549,52 @@ def send_message(chat_id, text, reply_markup=None, parse_mode="HTML"):
         payload.pop("parse_mode", None)
         return tg_request("sendMessage", payload)
     return res
+
+def normalize_uz_phone(text):
+    if not text:
+        return None
+    digits = re.sub(r'\D', '', str(text))
+    if len(digits) == 9:
+        return '+998' + digits
+    elif len(digits) == 12 and digits.startswith('998'):
+        return '+' + digits
+    return None
+
+def send_driver_card(target_chat_id, d):
+    try:
+        d_name = d.get('full_name', '')
+        d_id = d.get('account_id') or 'HP-100000'
+        d_phone = d.get('phone', '')
+        d_plate = d.get('truck_plate', '')
+        d_pass = d.get('password', '')
+
+        card = (
+            f"👤 <b>I.F:</b> {safe_html(d_name)}\n"
+            f"🆔 <b>Maxsus ID:</b> <code>{safe_html(d_id)}</code>\n"
+            f"📱 <b>Telefon (Login):</b> <code>{safe_html(d_phone)}</code>\n"
+            f"🚛 <b>Mashina raqami:</b> <code>{safe_html(d_plate)}</code>\n"
+            f"🔑 <b>Kirish paroli:</b> <code>{safe_html(d_pass)}</code>"
+        )
+        inline_kb = {
+            "inline_keyboard": [
+                [
+                    {"text": "✏️ Tahrirlash", "callback_data": f"edtdrv_{d_phone}"},
+                    {"text": "❌ O‘chirish", "callback_data": f"deldriver_{d_phone}"}
+                ]
+            ]
+        }
+        res = send_message(target_chat_id, card, reply_markup=inline_kb, parse_mode="HTML")
+        if not res:
+            plain_card = (
+                f"👤 I.F: {d_name}\n"
+                f"🆔 Maxsus ID: {d_id}\n"
+                f"📱 Telefon: {d_phone}\n"
+                f"🚛 Mashina raqami: {d_plate}\n"
+                f"🔑 Kirish paroli: {d_pass}"
+            )
+            send_message(target_chat_id, plain_card, reply_markup=inline_kb, parse_mode="")
+    except Exception as e:
+        print(f"Error in send_driver_card: {e}")
 
 def edit_message_text(chat_id, message_id, text, reply_markup=None, parse_mode="HTML"):
     payload = {
@@ -2623,7 +2645,8 @@ def get_otp_keyboard():
 def get_driver_search_choice_keyboard():
     return {
         "keyboard": [
-            [{"text": "🆔 ID orqali qidirish"}, {"text": "📱 Telefon raqam orqali qidirish"}],
+            [{"text": "🆔 ID orqali qidirish"}],
+            [{"text": "📱 Telefon raqam orqali qidirish"}],
             [{"text": "⬅️ Admin menyusiga qaytish"}]
         ],
         "resize_keyboard": True
@@ -2632,7 +2655,8 @@ def get_driver_search_choice_keyboard():
 def get_user_search_choice_keyboard():
     return {
         "keyboard": [
-            [{"text": "🆔 ID orqali qidirish"}, {"text": "📱 Telefon raqam orqali qidirish"}],
+            [{"text": "🆔 ID orqali qidirish"}],
+            [{"text": "📱 Telefon raqam orqali qidirish"}],
             [{"text": "⬅️ Admin menyusiga qaytish"}]
         ],
         "resize_keyboard": True
@@ -2642,8 +2666,9 @@ def get_admin_reply_keyboard():
     return {
         "keyboard": [
             [{"text": "🔍 Haydovchini qidirish"}, {"text": "🔍 Aholini qidirish"}],
-            [{"text": "➕ Yangi haydovchi qo‘shish"}, {"text": "👥 Aholi ro‘yxati (Excel)"}],
-            [{"text": "📋 Haydovchilar ro‘yxati"}, {"text": "👥 Fuqarolar statistikasi"}],
+            [{"text": "➕ Yangi haydovchi qo‘shish"}],
+            [{"text": "📋 Haydovchilar ro‘yxati"}, {"text": "👥 Aholi ro‘yxati (Excel)"}],
+            [{"text": "👥 Fuqarolar statistikasi"}],
             [{"text": "⬅️ Asosiy menyuga qaytish"}]
         ],
         "resize_keyboard": True
@@ -3114,8 +3139,10 @@ def handle_message(msg):
         # 1. Agar admin klaviaturadagi boshqa buyruq tugmasini bossa -> Joriy holatni tozalaymiz
         admin_menu_cmds = [
             "🔍 Haydovchini qidirish", "🔍 Aholini qidirish", "➕ Yangi haydovchi qo‘shish",
-            "👥 Aholi ro‘yxati (Excel)", "📋 Aholi ro‘yxati (Excel)", "📋 Haydovchilar ro‘yxati",
+            "👥 Aholi ro‘yxati (Excel)", "👥 Aholi ro'yxati (Excel)", "📋 Aholi ro‘yxati (Excel)", "📋 Aholi ro'yxati (Excel)",
+            "📋 Haydovchilar ro‘yxati", "📋 Haydovchilar ro'yxati",
             "👥 Fuqarolar statistikasi", "⬅️ Asosiy menyuga qaytish", "⬅️ Admin menyusiga qaytish",
+            "🆔 ID orqali qidirish", "📱 Telefon raqam orqali qidirish", "📱 Telefon raqami orqali qidirish",
             "/exit_admin", "/admin", "/admin_login"
         ]
 
@@ -3161,6 +3188,7 @@ def handle_message(msg):
 
         # 3. Haydovchini qidirish menyusi
         if text in ["🔍 Haydovchini qidirish", "/search_driver"]:
+            user_sub["search_target"] = "driver"
             user_sub["admin_state"] = "awaiting_driver_search_choice"
             save_subscribers(subs)
             send_message(
@@ -3173,6 +3201,7 @@ def handle_message(msg):
 
         # 4. Aholini qidirish menyusi
         if text in ["🔍 Aholini qidirish", "/search_user"]:
+            user_sub["search_target"] = "user"
             user_sub["admin_state"] = "awaiting_user_search_choice"
             save_subscribers(subs)
             send_message(
@@ -3182,6 +3211,54 @@ def handle_message(msg):
                 parse_mode="HTML"
             )
             return
+
+        # 4.1 XOHLAGAN JOYDA ID ORQALI QIDIRISH BOSILGANDA
+        if text == "🆔 ID orqali qidirish":
+            target = user_sub.get("search_target", "user")
+            if target == "driver":
+                user_sub["admin_state"] = "awaiting_search_driver_id"
+                save_subscribers(subs)
+                send_message(
+                    chat_id,
+                    "🆔 Haydovchining <b>Maxsus ID-sini</b> kiriting:\n<i>(Masalan: HP-123456 yoki 123456)</i>",
+                    reply_markup=get_driver_search_choice_keyboard(),
+                    parse_mode="HTML"
+                )
+                return
+            else:
+                user_sub["admin_state"] = "awaiting_search_user_id"
+                save_subscribers(subs)
+                send_message(
+                    chat_id,
+                    "🆔 Fuqaroning <b>Maxsus ID-sini</b> kiriting:\n<i>(Masalan: XP-123456 yoki 123456)</i>",
+                    reply_markup=get_user_search_choice_keyboard(),
+                    parse_mode="HTML"
+                )
+                return
+
+        # 4.2 XOHLAGAN JOYDA TELEFON RAQAM ORQALI QIDIRISH BOSILGANDA
+        if text in ["📱 Telefon raqam orqali qidirish", "📱 Telefon raqami orqali qidirish"]:
+            target = user_sub.get("search_target", "user")
+            if target == "driver":
+                user_sub["admin_state"] = "awaiting_search_driver_phone"
+                save_subscribers(subs)
+                send_message(
+                    chat_id,
+                    "📱 Haydovchining <b>Telefon raqamini</b> kiriting:\n<i>(Masalan: +998912345678 yoki 912345678)</i>",
+                    reply_markup=get_driver_search_choice_keyboard(),
+                    parse_mode="HTML"
+                )
+                return
+            else:
+                user_sub["admin_state"] = "awaiting_search_user_phone"
+                save_subscribers(subs)
+                send_message(
+                    chat_id,
+                    "📱 Fuqaroning <b>Telefon raqamini</b> kiriting:\n<i>(Masalan: +998912345678 yoki 912345678)</i>",
+                    reply_markup=get_user_search_choice_keyboard(),
+                    parse_mode="HTML"
+                )
+                return
 
         # 5. Yangi haydovchi qo'shish
         if text in ["➕ Yangi haydovchi qo‘shish", "/add_driver"]:
@@ -3196,7 +3273,7 @@ def handle_message(msg):
             return
 
         # 6. Haydovchilar ro'yxati
-        if text in ["📋 Haydovchilar ro‘yxati", "/drivers"]:
+        if text in ["📋 Haydovchilar ro‘yxati", "📋 Haydovchilar ro'yxati", "/drivers"]:
             drivers = db_manager.get_all_drivers()
             if not drivers:
                 send_message(chat_id, "Hozircha tizimda faol haydovchilar yo‘q.")
@@ -3310,21 +3387,24 @@ def handle_message(msg):
 
         # 9. Haydovchini Telefon orqali qidirish
         if user_sub.get("admin_state") == "awaiting_search_driver_phone":
+            norm_phone = normalize_uz_phone(text)
             digits = re.sub(r'\D', '', text)
-            if len(digits) < 9 or len(digits) > 12:
+            last9 = digits[-9:] if len(digits) >= 9 else digits
+            if not last9 or len(digits) < 9:
                 send_message(
                     chat_id,
                     "⚠️ <b>Noto‘g‘ri format!</b> Iltimos, haydovchi telefon raqamini to‘g‘ri kiriting:\n<i>(Masalan: +998912345678 yoki 912345678)</i>",
                     parse_mode="HTML"
                 )
                 return
-            drv = db_manager.get_driver_by_phone(digits)
+            drv = db_manager.get_driver_by_phone(norm_phone or text) or db_manager.get_driver_by_phone(last9)
             user_sub.pop("admin_state", None)
             save_subscribers(subs)
             if drv:
                 send_driver_card(chat_id, drv)
             else:
-                send_message(chat_id, f"❌ <b>+{digits} raqamli haydovchi server bazasida topilmadi!</b>", parse_mode="HTML")
+                disp_num = norm_phone or text.strip()
+                send_message(chat_id, f"❌ <b>«{safe_html(disp_num)}»</b> raqamli haydovchi server bazasida topilmadi!", parse_mode="HTML")
             return
 
         # 10. Aholini ID orqali qidirish (Faqat Server Database dan)
@@ -3390,15 +3470,17 @@ def handle_message(msg):
 
         # 11. Aholini Telefon orqali qidirish (Faqat Server Database dan)
         if user_sub.get("admin_state") == "awaiting_search_user_phone":
+            norm_phone = normalize_uz_phone(text)
             digits = re.sub(r'\D', '', text)
-            if len(digits) < 9 or len(digits) > 12:
+            last9 = digits[-9:] if len(digits) >= 9 else digits
+            if not last9 or len(digits) < 9:
                 send_message(
                     chat_id,
                     "⚠️ <b>Noto‘g‘ri format!</b> Iltimos, fuqaroning telefon raqamini to‘g‘ri kiriting:\n<i>(Masalan: +998912345678 yoki 912345678)</i>",
                     parse_mode="HTML"
                 )
                 return
-            user_row = db_manager.get_user_by_phone(digits)
+            user_row = db_manager.get_user_by_phone(norm_phone or text) or db_manager.get_user_by_phone(last9)
             user_sub.pop("admin_state", None)
             save_subscribers(subs)
 
@@ -3464,19 +3546,19 @@ def handle_message(msg):
             send_message(chat_id, prompt, parse_mode="HTML")
             return
 
-        # 2-bosqich: Telefon kiritildi -> Tekshiruv va Mashina raqamini so'rash
+        # 2-bosqich: Telefon kiritildi -> 9 ta raqam bo'lsa ham avtomatik +998 qo'shiladi!
         if user_sub.get("admin_state") == "awaiting_driver_phone":
-            raw_phone = text.strip().replace(" ", "")
-            # Qat'iy tekshiruv: +998 bilan boshlanishi va jami 13 ta belgi bo'lishi kerak
-            if not (raw_phone.startswith("+998") and len(raw_phone) == 13 and raw_phone[1:].isdigit()):
+            norm_phone = normalize_uz_phone(text)
+            if not norm_phone:
                 send_message(
                     chat_id,
-                    "⚠️ <b>Iltimos, telefon raqamingizni to‘g‘ri formatda kiriting (Masalan: +998912345678)</b>",
+                    "⚠️ <b>Iltimos, telefon raqamini to‘g‘ri formatda kiriting!</b>\n"
+                    "<i>(Masalan: 991234567 yoki +998991234567)</i>",
                     parse_mode="HTML"
                 )
                 return
 
-            d_phone = raw_phone
+            d_phone = norm_phone
             user_sub["new_d_phone"] = d_phone
             user_sub["admin_state"] = "awaiting_driver_plate"
             save_subscribers(subs)
@@ -3488,25 +3570,31 @@ def handle_message(msg):
             send_message(chat_id, prompt, parse_mode="HTML")
             return
 
-        # 3-bosqich: Mashina raqami kiritildi -> Tekshiruv va Parol so'rash
+        # 3-bosqich: Mashina raqami kiritildi -> O'zbekiston formati (01A123AA yoki 01123AAA)
         if user_sub.get("admin_state") == "awaiting_driver_plate":
             raw_plate = text.strip().upper()
             clean_plate = re.sub(r'[^A-Z0-9]', '', raw_plate)
-            if len(clean_plate) > 8 or len(clean_plate) < 4:
+            # Faqat O'zbekiston davlat raqami formati:
+            # 1) Jismoniy shaxs: 2 raqam + 1 harf + 3 raqam + 2 harf (01A123AA yoki 70M260EB)
+            # 2) Yuridik shaxs: 2 raqam + 3 raqam + 3 harf (01123AAA yoki 70123AAA)
+            if not re.match(r'^\d{2}(?:[A-Z]\d{3}[A-Z]{2}|\d{3}[A-Z]{3})$', clean_plate):
                 send_message(
                     chat_id,
-                    "⚠️ <b>Iltimos, davlat raqamini to‘g‘ri kiriting (Masalan: 01A123AA yoki 01123AAA)</b>",
+                    "⚠️ <b>Noto‘g‘ri davlat raqami formati!</b>\n\n"
+                    "Iltimos, O‘zbekiston davlat raqamini to‘g‘ri kiriting:\n"
+                    "• Masalan (jismoniy shaxs): <b>01A123AA</b> yoki <b>70M260EB</b>\n"
+                    "• Masalan (yuridik shaxs): <b>01123AAA</b>",
                     parse_mode="HTML"
                 )
                 return
 
-            user_sub["new_d_plate"] = raw_plate
+            user_sub["new_d_plate"] = clean_plate
             user_sub["admin_state"] = "awaiting_driver_password"
             save_subscribers(subs)
             prompt = (
-                f"🚛 <b>Mashina raqami:</b> <code>{raw_plate}</code> ✅\n\n"
+                f"🚛 <b>Mashina raqami:</b> <code>{clean_plate}</code> ✅\n\n"
                 "4️⃣ Endi haydovchining <b>Maxsus kirish parolini</b> kiriting:\n"
-                "<i>(Masalan: GAZ2026 yoki gaz2026)</i>"
+                "<i>(Masalan: GAZ2026 yoki ahror2005)</i>"
             )
             send_message(chat_id, prompt, parse_mode="HTML")
             return
@@ -3580,21 +3668,24 @@ def handle_message(msg):
                     )
                     return
             elif field == "phone":
-                raw_p = new_val.replace(" ", "")
-                if not (raw_p.startswith("+998") and len(raw_p) == 13 and raw_p[1:].isdigit()):
+                norm_p = normalize_uz_phone(new_val)
+                if not norm_p:
                     send_message(
                         chat_id,
-                        "⚠️ <b>Iltimos, telefon raqamingizni to‘g‘ri formatda kiriting (Masalan: +998912345678)</b>",
+                        "⚠️ <b>Iltimos, telefon raqamini to‘g‘ri formatda kiriting!</b>\n<i>(Masalan: 991234567 yoki +998991234567)</i>",
                         parse_mode="HTML"
                     )
                     return
-                new_val = raw_p
+                new_val = norm_p
             elif field == "truck_plate":
                 clean_plate = re.sub(r'[^A-Z0-9]', '', new_val.upper())
-                if len(clean_plate) > 8 or len(clean_plate) < 4:
+                if not re.match(r'^\d{2}(?:[A-Z]\d{3}[A-Z]{2}|\d{3}[A-Z]{3})$', clean_plate):
                     send_message(
                         chat_id,
-                        "⚠️ <b>Iltimos, davlat raqamini to‘g‘ri kiriting (Masalan: 01A123AA yoki 01123AAA)</b>",
+                        "⚠️ <b>Noto‘g‘ri davlat raqami formati!</b>\n\n"
+                        "Iltimos, O‘zbekiston davlat raqamini to‘g‘ri kiriting:\n"
+                        "• Masalan: <b>01A123AA</b> yoki <b>70M260EB</b>\n"
+                        "• Masalan: <b>01123AAA</b>",
                         parse_mode="HTML"
                     )
                     return
@@ -3747,30 +3838,7 @@ def handle_message(msg):
             return
             return
 
-    # Helper function to send driver card with Edit and Delete inline buttons
-    def send_driver_card(target_chat_id, d):
-        d_name = d.get('full_name', '')
-        d_id = d.get('account_id') or 'HP-100000'
-        d_phone = d.get('phone', '')
-        d_plate = d.get('truck_plate', '')
-        d_pass = d.get('password', '')
 
-        card = (
-            f"👤 <b>I.F:</b> {safe_html(d_name)}\n"
-            f"🆔 <b>Maxsus ID:</b> <code>{safe_html(d_id)}</code>\n"
-            f"📱 <b>Telefon (Login):</b> <code>{safe_html(d_phone)}</code>\n"
-            f"🚛 <b>Mashina raqami:</b> <code>{safe_html(d_plate)}</code>\n"
-            f"🔑 <b>Kirish paroli:</b> <code>{safe_html(d_pass)}</code>"
-        )
-        inline_kb = {
-            "inline_keyboard": [
-                [
-                    {"text": "✏️ Tahrirlash", "callback_data": f"edtdrv_{d_phone}"},
-                    {"text": "❌ O‘chirish", "callback_data": f"deldriver_{d_phone}"}
-                ]
-            ]
-        }
-        send_message(target_chat_id, card, reply_markup=inline_kb, parse_mode="HTML")
 
     # /start komandasi
     if text.startswith("/start"):

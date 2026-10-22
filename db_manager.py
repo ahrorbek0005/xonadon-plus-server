@@ -377,10 +377,26 @@ def get_driver_by_phone(phone):
     raw = str(phone or '').strip()
     digits = re.sub(r'\D', '', raw)
     last9 = digits[-9:] if len(digits) >= 9 else digits
-    c.execute("SELECT * FROM drivers WHERE (phone = ? OR phone LIKE ? OR phone LIKE ?) AND is_active = 1", (raw, f"%{last9}%", f"%{digits}%"))
+    if not last9:
+        conn.close()
+        return None
+    c.execute("SELECT * FROM drivers WHERE (phone = ? OR phone LIKE ? OR phone LIKE ?) AND is_active = 1", 
+              (raw, f"%{last9}%", f"%{digits}%"))
     row = c.fetchone()
+    if row:
+        conn.close()
+        return dict(row)
+    # Fallback: scan all active drivers with normalized phone comparison
+    c.execute("SELECT * FROM drivers WHERE is_active = 1")
+    for r in c.fetchall():
+        d_dict = dict(r)
+        d_digits = re.sub(r'\D', '', str(d_dict.get('phone', '')))
+        if d_digits.endswith(last9) or last9 in d_digits:
+            conn.close()
+            return d_dict
     conn.close()
-    return dict(row) if row else None
+    return None
+
 
 def get_driver_by_account_id(account_id):
     if not account_id:
@@ -391,13 +407,26 @@ def get_driver_by_account_id(account_id):
     c.execute("SELECT * FROM drivers WHERE (UPPER(account_id) = ? OR UPPER(account_id) = ?) AND is_active = 1", 
               (clean_id, f"HP-{clean_id}"))
     row = c.fetchone()
-    if not row:
-        digits = re.sub(r'\D', '', clean_id)
-        if digits and len(digits) >= 4:
-            c.execute("SELECT * FROM drivers WHERE account_id LIKE ? AND is_active = 1", (f"%{digits}%",))
-            row = c.fetchone()
+    if row:
+        conn.close()
+        return dict(row)
+    digits = re.sub(r'\D', '', clean_id)
+    if digits and len(digits) >= 4:
+        c.execute("SELECT * FROM drivers WHERE account_id LIKE ? AND is_active = 1", (f"%{digits}%",))
+        row = c.fetchone()
+        if row:
+            conn.close()
+            return dict(row)
+    c.execute("SELECT * FROM drivers WHERE is_active = 1")
+    for r in c.fetchall():
+        d_dict = dict(r)
+        acc = str(d_dict.get('account_id', '')).upper()
+        if clean_id in acc or acc in clean_id or (digits and digits in re.sub(r'\D', '', acc)):
+            conn.close()
+            return d_dict
     conn.close()
-    return dict(row) if row else None
+    return None
+
 
 def update_driver_admin_credentials(phone, field, new_value):
     conn = get_connection()
