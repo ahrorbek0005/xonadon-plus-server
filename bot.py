@@ -5246,7 +5246,8 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                     if d_lat is None or d_lng is None or d_lat == 0 or d_lng == 0:
                         continue
 
-                    acc_id = ds.get("account_id") or f"drv_{re.sub(r'\D', '', str(ds.get('phone','')))[-7:]}"
+                    clean_phone_part = re.sub(r'\D', '', str(ds.get('phone', '')))[-7:]
+                    acc_id = ds.get("account_id") or ("drv_" + clean_phone_part)
                     if acc_id in seen_accounts:
                         continue
 
@@ -5289,7 +5290,8 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                     if dt_lat is None or dt_lng is None or dt_lat == 0 or dt_lng == 0:
                         continue
 
-                    dt_acc = dt.get("account_id") or f"drv_{re.sub(r'\D', '', str(dt.get('phone','')))[-7:]}"
+                    clean_dt_phone = re.sub(r'\D', '', str(dt.get('phone', '')))[-7:]
+                    dt_acc = dt.get("account_id") or ("drv_" + clean_dt_phone)
                     if dt_acc in seen_accounts:
                         continue
 
