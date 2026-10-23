@@ -7259,7 +7259,7 @@ def build_drivers_pure_xlsx(filepath, title, subtitle, headers, rows):
 </styleSheet>'''
 
     col_letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I']
-    col_widths = [6, 16, 30, 18, 18, 18, 16, 22, 16]
+    col_widths = [6, 16, 30, 18, 16, 18, 18, 16, 22]
     sheet_lines = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
                    '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">',
                    '<sheetViews><sheetView tabSelected="1" workbookViewId="0" showGridLines="1"/></sheetViews>',
@@ -7290,7 +7290,7 @@ def build_drivers_pure_xlsx(filepath, title, subtitle, headers, rows):
             r_cells = []
             for ci, val in enumerate(r):
                 ref = f'{col_letters[ci]}{ri}'
-                is_centered = ci in (0, 1, 3, 4, 5)
+                is_centered = (ci != 2)
                 s_idx = ('7' if is_alt else '6') if is_centered else ('5' if is_alt else '4')
                 r_cells.append(f'<c r="{ref}" s="{s_idx}" t="inlineStr"><is><t>{esc(val)}</t></is></c>')
             sheet_lines.append(f'<row r="{ri}" ht="22" customHeight="1">' + ''.join(r_cells) + '</row>')
@@ -7330,11 +7330,11 @@ def generate_drivers_excel():
         "Maxsus ID",
         "Haydovchining ism-familiyasi",
         "Telefon raqami",
+        "Parol",
         "Davlat raqami",
         "Mashina rusumi",
         "Mashina rangi",
-        "Ro‘yxatdan o‘tgan sana",
-        "Parol"
+        "Ro‘yxatdan o‘tgan sana"
     ]
 
     prepared_rows = []
@@ -7342,12 +7342,12 @@ def generate_drivers_excel():
         d_id = d.get("account_id") or f"HP-{100000 + d.get('id', idx)}"
         fname = d.get("full_name") or "Noma'lum"
         phone = d.get("phone") or ""
+        pwd = d.get("password") or ""
         plate = d.get("truck_plate") or "Biriktirilmagan"
         model = d.get("truck_model") or "Isuzu"
         color = d.get("truck_color") or "Oq"
         created_dt = format_uzb_timestamp(d.get("created_at"))
-        pwd = d.get("password") or ""
-        prepared_rows.append([idx, d_id, fname, phone, plate, model, color, created_dt, pwd])
+        prepared_rows.append([idx, d_id, fname, phone, pwd, plate, model, color, created_dt])
 
     try:
         import openpyxl
