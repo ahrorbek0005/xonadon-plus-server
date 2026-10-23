@@ -3330,6 +3330,14 @@ def handle_message(msg):
                 send_message(chat_id, "❌ Excel faylni yuklashda xatolik yuz berdi.")
             return
 
+        # 6B. Barcha haydovchilarni butunlay tozalash (Admin buyrug'i)
+        if text in ["/clear_all_drivers", "/clear_drivers", "🗑 Barcha haydovchilarni tozalash"]:
+            db_manager.clear_all_drivers_and_trucks()
+            active_driver_states.clear()
+            current_driver_state.clear()
+            send_message(chat_id, "✅ <b>Barcha haydovchilar va mashinalar server bazasidan butunlay tozalandi!</b>\nHozirda tizimda 0 ta haydovchi qoldi.", parse_mode="HTML")
+            return
+
         # 7. Fuqarolar statistikasi
         if text in ["👥 Fuqarolar statistikasi", "/users"]:
             conn = db_manager.get_connection()
