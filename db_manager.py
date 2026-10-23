@@ -107,6 +107,8 @@ def ensure_uzb_timezone_migration():
                 print(f"[TZ MIGRATION INNER ERROR]: {e_mig}")
         conn.close()
     except Exception as e_out:
+        print(f"[TZ MIGRATION ERROR]: {e_out}")
+
 def purge_legacy_test_drivers():
     """Barcha eski sinov haydovchilari (ahror, 940401009 yoki account_id yo'q) serverdan butunlay tozalab tashlanadi"""
     try:
