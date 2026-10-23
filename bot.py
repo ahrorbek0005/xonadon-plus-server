@@ -5050,6 +5050,23 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                     self.wfile.write(f.read())
                 return
             else:
+                # Fallback: extract digits from filename and fetch Base64 from database!
+                try:
+                    import base64
+                    digits = re.sub(r'\D', '', filename)
+                    raw_p = digits[:9] if len(digits) >= 9 else digits
+                    av = db_manager.get_user_avatar(raw_p)
+                    if av and "," in av:
+                        header, encoded = av.split(",", 1)
+                        img_bytes = base64.b64decode(encoded)
+                        self.send_response(200)
+                        self.send_header("Content-Type", "image/jpeg")
+                        self.send_header("Access-Control-Allow-Origin", "*")
+                        self.end_headers()
+                        self.wfile.write(img_bytes)
+                        return
+                except Exception:
+                    pass
                 self.send_response(404)
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
@@ -5536,15 +5553,11 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                     try:
                         with open(filepath, "wb") as f:
                             f.write(base64.b64decode(encoded))
-                        avatar_url = f"https://xonadon-plus-server.onrender.com/uploads/avatars/{filename}"
                     except Exception as err:
-                        print("Avatar file write failed, using data URL:", err)
-                        avatar_url = image_data
+                        pass
 
-                final_avatar_url = avatar_url or image_data
-                if final_avatar_url.startswith("/"):
-                    final_avatar_url = f"https://xonadon-plus-server.onrender.com{final_avatar_url}"
-
+                # Store the permanent Base64 Data URI directly in SQLite database!
+                final_avatar_url = image_data
                 db_manager.save_user_avatar(phone, role, final_avatar_url, account_id)
                 if role == "driver":
                     current_driver_state["avatar_url"] = final_avatar_url
@@ -5855,6 +5868,33 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                     }).encode("utf-8"))
                     return
 
+                # Check if user has finished registration in Telegram bot (name + full address saved)
+                is_fully_registered = False
+                if target_sub:
+                    addr = target_sub.get("address") or {}
+                    fn = (target_sub.get("full_name") or target_sub.get("first_name") or "").strip()
+                    if fn and fn != "Fuqaro" and addr.get("region") and addr.get("mfy") and addr.get("street"):
+                        is_fully_registered = True
+
+                if not is_fully_registered:
+                    db_u = db_manager.get_user_by_phone(raw_phone)
+                    if db_u:
+                        fn = (db_u.get("full_name") or "").strip()
+                        if fn and fn != "Fuqaro" and db_u.get("mfy") and db_u.get("street"):
+                            is_fully_registered = True
+
+                if not is_fully_registered:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(json.dumps({
+                        "ok": False,
+                        "bot_unregistered": True,
+                        "message": "⚠️ Siz hali Telegram botimizda (@xonadon_plus_bot) ro‘yxatdan o‘tishni to‘liq yakunlamagansiz!\n\nIltimos, avval botga ism-familiyangiz va yashash manzilingizni to‘liq kiriting. «MANZILINGIZ MUVAFFAQIYATLI SAQLANDI» xabarini olganingizdan so‘ng ilovaga kira olasiz."
+                    }).encode("utf-8"))
+                    return
+
                 # Generate 4-digit code
                 code = f"{random.randint(1000, 9999)}"
                 db_manager.set_otp(raw_phone, code)
@@ -5943,28 +5983,56 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                     return
                 else:
                     # Login
+                    subs = load_subscribers()
+                    target_sub = None
+                    for cid, s in subs.items():
+                        s_phone = re.sub(r'\D', '', str(s.get("phone", "") or s.get("raw_phone", "")))
+                        if s_phone and (s_phone == raw_phone or s_phone.endswith(raw_phone[-9:]) or raw_phone.endswith(s_phone[-9:])):
+                            target_sub = s
+                            break
+
+                    is_fully_registered = False
+                    if target_sub:
+                        addr = target_sub.get("address") or {}
+                        fn = (target_sub.get("full_name") or target_sub.get("first_name") or "").strip()
+                        if fn and fn != "Fuqaro" and addr.get("region") and addr.get("mfy") and addr.get("street"):
+                            is_fully_registered = True
+
                     user = db_manager.get_user_by_phone(f"+{raw_phone}") or db_manager.get_user_by_phone(raw_phone)
-                    if not user:
-                        conn = db_manager.get_connection()
-                        c = conn.cursor()
-                        c.execute("SELECT * FROM users WHERE phone LIKE ?", (f"%{raw_phone[-9:]}%",))
-                        user = c.fetchone()
-                        conn.close()
-                    
                     if user:
                         user_dict = dict(user)
+                        fn = (user_dict.get("full_name") or "").strip()
+                        if fn and fn != "Fuqaro" and user_dict.get("mfy") and user_dict.get("street"):
+                            is_fully_registered = True
                     else:
+                        user_dict = None
+
+                    if not is_fully_registered:
+                        self.send_response(200)
+                        self.send_header("Content-Type", "application/json")
+                        self.send_header("Access-Control-Allow-Origin", "*")
+                        self.end_headers()
+                        self.wfile.write(json.dumps({
+                            "ok": False,
+                            "bot_unregistered": True,
+                            "message": "⚠️ Siz hali Telegram botimizda (@xonadon_plus_bot) ro‘yxatdan o‘tishni to‘liq yakunlamagansiz!\n\nIltimos, avval botga ism-familiyangiz va yashash manzilingizni to‘liq kiriting. «MANZILINGIZ MUVAFFAQIYATLI SAQLANDI» xabarini olganingizdan so‘ng ilovaga kira olasiz."
+                        }).encode("utf-8"))
+                        return
+
+                    if not user_dict and target_sub:
+                        addr = target_sub.get("address") or {}
+                        fn = (target_sub.get("full_name") or target_sub.get("first_name") or "Fuqaro").strip()
                         reg_res = db_manager.register_user(
                             phone=f"+{raw_phone}",
-                            full_name="Fuqaro",
+                            full_name=fn,
                             role="resident",
-                            region="",
-                            district="",
-                            mfy="",
-                            street="",
-                            house_number=""
+                            region=addr.get("region", ""),
+                            district=addr.get("district", ""),
+                            mfy=addr.get("mfy", ""),
+                            street=addr.get("street", ""),
+                            house_number=addr.get("house", "")
                         )
-                        user_dict = reg_res.get("user") or {"phone": f"+{raw_phone}", "full_name": "Fuqaro", "role": "resident", "account_id": db_manager.generate_unique_account_id("XP-")}
+                        user_dict = reg_res.get("user") or db_manager.get_user_by_phone(raw_phone)
 
                     if not user_dict.get("account_id"):
                         user_dict["account_id"] = db_manager.generate_unique_account_id("XP-")
