@@ -9,9 +9,6 @@ import os
 import sys
 import tempfile
 import traceback
-import logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("xonadon_bot")
 import db_manager
 db_manager.init_db()
 import time
@@ -3696,15 +3693,9 @@ def handle_message(msg):
         # 4-bosqich: Parol kiritildi -> Bazaga saqlash va yakunlash
         if user_sub.get("admin_state") == "awaiting_driver_password":
             d_pass = text.strip()
-            d_name = user_sub.get("new_d_name")
-            d_phone = user_sub.get("new_d_phone")
-            d_plate = user_sub.get("new_d_plate")
-
-            if not d_name or not d_phone or not d_plate:
-                send_message(chat_id, "⚠️ <b>Ma’lumotlar to‘liq kiritilmadi!</b> Iltimos, qaytadan urinib ko‘ring.", reply_markup=get_admin_reply_keyboard(), parse_mode="HTML")
-                user_sub.pop("admin_state", None)
-                save_subscribers(subs)
-                return
+            d_name = user_sub.get("new_d_name", "Haydovchi")
+            d_phone = user_sub.get("new_d_phone", "+998912345678")
+            d_plate = user_sub.get("new_d_plate", "70M260EB")
 
             try:
                 res = db_manager.add_driver(
@@ -3715,7 +3706,6 @@ def handle_message(msg):
                     assigned_mfy="koksoy"
                 )
             except Exception as e:
-                print(f"Error in add_driver call: {e}")
                 res = {"ok": False, "message": f"Bazaga yozishda xatolik: {e}"}
             if not res or not res.get("ok"):
                 err_msg = res.get("message", "Ushbu ma’lumotlar bilan haydovchi qo‘shib bo‘lmadi.") if isinstance(res, dict) else "Xatolik"
@@ -4118,7 +4108,7 @@ def handle_message(msg):
                 acc_id = u_reg["user"].get("account_id")
                 db_manager.update_user_name(phone_to_reg, acc_id, clean_name)
         except Exception as e:
-            print(f"Error registering resident name: {e}")
+            logger.error(f"Error registering resident name: {e}")
 
         if acc_id:
             user_sub["account_id"] = acc_id
@@ -7272,7 +7262,7 @@ def build_drivers_pure_xlsx(filepath, title, subtitle, headers, rows):
 </styleSheet>'''
 
     col_letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I']
-    col_widths = [6, 16, 30, 18, 16, 18, 18, 16, 22]
+    col_widths = [6, 16, 30, 18, 18, 18, 16, 22, 16]
     sheet_lines = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
                    '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">',
                    '<sheetViews><sheetView tabSelected="1" workbookViewId="0" showGridLines="1"/></sheetViews>',
@@ -7303,7 +7293,7 @@ def build_drivers_pure_xlsx(filepath, title, subtitle, headers, rows):
             r_cells = []
             for ci, val in enumerate(r):
                 ref = f'{col_letters[ci]}{ri}'
-                is_centered = (ci != 2)
+                is_centered = ci in (0, 1, 3, 4, 5)
                 s_idx = ('7' if is_alt else '6') if is_centered else ('5' if is_alt else '4')
                 r_cells.append(f'<c r="{ref}" s="{s_idx}" t="inlineStr"><is><t>{esc(val)}</t></is></c>')
             sheet_lines.append(f'<row r="{ri}" ht="22" customHeight="1">' + ''.join(r_cells) + '</row>')
@@ -7355,11 +7345,11 @@ def generate_drivers_excel():
         d_id = d.get("account_id") or f"HP-{100000 + d.get('id', idx)}"
         fname = d.get("full_name") or "Noma'lum"
         phone = d.get("phone") or ""
-        pwd = d.get("password") or ""
         plate = d.get("truck_plate") or "Biriktirilmagan"
         model = d.get("truck_model") or "Isuzu"
         color = d.get("truck_color") or "Oq"
         created_dt = format_uzb_timestamp(d.get("created_at"))
+        pwd = d.get("password") or ""
         prepared_rows.append([idx, d_id, fname, phone, pwd, plate, model, color, created_dt])
 
     try:

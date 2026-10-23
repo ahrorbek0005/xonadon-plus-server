@@ -45,7 +45,11 @@ def ensure_db_columns():
             conn.commit()
         except Exception:
             pass
+    # Clean stuck old driver HP-100002 from database
     try:
+        c.execute("DELETE FROM drivers WHERE id = 2 OR (full_name = 'ahror' AND password = 'gaz2020')")
+        c.execute("DELETE FROM users WHERE phone = '+998940401009' AND role = 'resident'")
+        c.execute("DELETE FROM driver_live WHERE phone = '+998940401009'")
         conn.commit()
     except Exception:
         pass
@@ -150,6 +154,7 @@ def init_db():
         mfy TEXT DEFAULT 'koksoy',
         street TEXT DEFAULT 'koksoy_markaziy',
         house_number TEXT DEFAULT '',
+        account_id TEXT DEFAULT '',
         pin_code TEXT,
         created_at TIMESTAMP DEFAULT (datetime('now', '+5 hours'))
     );
@@ -164,6 +169,7 @@ def init_db():
         truck_model TEXT DEFAULT 'Isuzu NPR 75',
         truck_plate TEXT NOT NULL,
         truck_color TEXT DEFAULT 'Oq (Sariq chiziqli)',
+        account_id TEXT DEFAULT '',
         assigned_region TEXT DEFAULT 'qashqadaryo',
         assigned_district TEXT DEFAULT 'nishon',
         assigned_mfy TEXT DEFAULT 'koksoy',
@@ -266,48 +272,29 @@ def generate_unique_account_id(prefix="XP-"):
 # --- USER FUNCTIONS ---
 def register_user(phone, full_name, role='resident', region='qashqadaryo', district='nishon', mfy='koksoy', street='koksoy_markaziy', house_number=''):
     clean_p = phone.strip()
-    digits = re.sub(r'\D', '', clean_p)
-    last9 = digits[-9:] if len(digits) >= 9 else digits
     conn = get_connection()
     c = conn.cursor()
-    # Check if exists by exact phone or last9 digits
-    row = None
-    if last9:
-        c.execute("SELECT * FROM users WHERE phone = ? OR phone LIKE ?", (clean_p, f"%{last9}%"))
-        row = c.fetchone()
-    else:
-        c.execute("SELECT * FROM users WHERE phone = ?", (clean_p,))
-        row = c.fetchone()
-
+    # Check if exists
+    c.execute("SELECT * FROM users WHERE phone = ?", (clean_p,))
+    row = c.fetchone()
     if row:
         u_dict = dict(row)
-        acc_id = u_dict.get("account_id")
-        if not acc_id:
+        if not u_dict.get("account_id"):
             acc_id = generate_unique_account_id("XP-")
+            c.execute("UPDATE users SET account_id = ? WHERE phone = ?", (acc_id, clean_p))
+            conn.commit()
             u_dict["account_id"] = acc_id
-        c.execute("UPDATE users SET full_name = ?, account_id = ? WHERE id = ?", (full_name, acc_id, u_dict["id"]))
-        conn.commit()
-        u_dict["full_name"] = full_name
         conn.close()
         return {"ok": True, "exists": True, "user": u_dict}
 
     account_id = generate_unique_account_id("XP-")
     now_uzb = get_uzb_time_str()
-    try:
-        c.execute("""
-        INSERT INTO users (phone, full_name, role, region, district, mfy, street, house_number, account_id, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (clean_p, full_name, role, region, district, mfy, street, house_number, account_id, now_uzb))
-        conn.commit()
-        user_id = c.lastrowid
-    except sqlite3.IntegrityError:
-        c.execute("SELECT * FROM users WHERE phone = ? OR phone LIKE ?", (clean_p, f"%{last9}%"))
-        row = c.fetchone()
-        u_dict = dict(row)
-        user_id = u_dict["id"]
-        account_id = u_dict.get("account_id") or account_id
-        c.execute("UPDATE users SET full_name = ?, account_id = ? WHERE id = ?", (full_name, account_id, user_id))
-        conn.commit()
+    c.execute("""
+    INSERT INTO users (phone, full_name, role, region, district, mfy, street, house_number, account_id, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (clean_p, full_name, role, region, district, mfy, street, house_number, account_id, now_uzb))
+    conn.commit()
+    user_id = c.lastrowid
     conn.close()
     return {
         "ok": True,
@@ -519,22 +506,23 @@ def add_driver(phone, full_name, truck_plate, password='gaz2026', truck_model='I
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
     """, (clean_p, full_name, truck_model, clean_plate, truck_color, assigned_region, assigned_district, assigned_mfy, password, account_id, now_uzb))
     
+    # Also ensure user table has driver role and same account_id
     try:
         c.execute("""
-        INSERT OR REPLACE INTO users (phone, full_name, role, region, district, mfy, account_id, two_step_password, two_step_hint, created_at)
-        VALUES (?, ?, 'driver', ?, ?, ?, ?, NULL, NULL, ?)
+        INSERT OR REPLACE INTO users (phone, full_name, role, region, district, mfy, account_id, created_at)
+        VALUES (?, ?, 'driver', ?, ?, ?, ?, ?)
         """, (clean_p, full_name, assigned_region, assigned_district, assigned_mfy, account_id, now_uzb))
-        c.execute("UPDATE users SET two_step_password = NULL, two_step_hint = NULL WHERE phone = ? OR phone LIKE ?", (clean_p, f"%{clean_p[-9:]}%"))
-    except Exception as _ue:
-        print(f"Non-critical user sync in add_driver: {_ue}")
+    except Exception:
+        pass
 
+    # Also register in driver_live with initial WAITING status
     try:
         c.execute("""
         INSERT OR REPLACE INTO driver_live (phone, driver_name, truck_plate, truck_model, truck_color, status, stage, lat, lng, region, district, mfy)
         VALUES (?, ?, ?, ?, ?, 'waiting', 'collect', NULL, NULL, ?, ?, ?)
         """, (clean_p, full_name, clean_plate, truck_model, truck_color, assigned_region, assigned_district, assigned_mfy))
-    except Exception as _le:
-        print(f"Non-critical driver_live sync in add_driver: {_le}")
+    except Exception:
+        pass
 
     conn.commit()
     conn.close()
@@ -708,10 +696,6 @@ def clear_all_drivers_and_trucks():
     c.execute("UPDATE users SET two_step_password = NULL, two_step_hint = NULL")
     c.execute("DELETE FROM sessions")
     conn.commit()
-    try:
-        c.execute("VACUUM")
-    except Exception:
-        pass
     conn.close()
     return True
 
