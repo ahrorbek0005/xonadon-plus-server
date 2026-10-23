@@ -4991,8 +4991,10 @@ def handle_callback(cb):
             phone_for_db = subs[cid_str].get("phone") or subs[cid_str].get("raw_phone", "")
             if phone_for_db:
                 fn = (subs[cid_str].get("full_name") or subs[cid_str].get("first_name") or "Fuqaro").strip()
+                clean_phone_digits = re.sub(r'\D', '', phone_for_db)
+                clean_phone_db = f"+{clean_phone_digits}" if clean_phone_digits else phone_for_db
                 db_manager.register_user(
-                    phone=f"+{re.sub(r'\D', '', phone_for_db)}",
+                    phone=clean_phone_db,
                     full_name=fn,
                     role="resident",
                     region=reg_key,
