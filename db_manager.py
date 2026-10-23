@@ -877,8 +877,12 @@ def get_user_2fa_status(phone):
     last9 = clean_p[-9:] if len(clean_p) >= 9 else clean_p
     conn = get_connection()
     c = conn.cursor()
-    c.execute("SELECT two_step_password, two_step_hint FROM users WHERE phone LIKE ?", (f"%{last9}%",))
-    row = c.fetchone()
+    row = None
+    try:
+        c.execute("SELECT two_step_password, two_step_hint FROM users WHERE phone LIKE ?", (f"%{last9}%",))
+        row = c.fetchone()
+    except Exception:
+        row = None
     if not row or not row["two_step_password"]:
         try:
             c.execute("SELECT two_step_password, two_step_hint FROM drivers WHERE phone LIKE ?", (f"%{last9}%",))
@@ -898,8 +902,12 @@ def verify_user_2fa(phone, password):
         return True
     conn = get_connection()
     c = conn.cursor()
-    c.execute("SELECT two_step_password FROM users WHERE phone LIKE ?", (f"%{last9}%",))
-    row = c.fetchone()
+    row = None
+    try:
+        c.execute("SELECT two_step_password FROM users WHERE phone LIKE ?", (f"%{last9}%",))
+        row = c.fetchone()
+    except Exception:
+        row = None
     if not row or not row["two_step_password"]:
         try:
             c.execute("SELECT two_step_password FROM drivers WHERE phone LIKE ?", (f"%{last9}%",))

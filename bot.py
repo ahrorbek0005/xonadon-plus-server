@@ -6156,10 +6156,13 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                                     break
                             if not matched:
                                 resp = {"ok": False, "message": "❌ Mashina davlat raqami mos kelmadi! Administrator kiritgan raqamni kiriting."}
-                            elif matched["password"] != password:
+                            elif str(matched["password"] or "").strip() != str(password).strip():
                                 resp = {"ok": False, "message": "❌ Parol noto‘g‘ri! Administrator bergan parolni kiriting."}
                             else:
-                                status_2fa = db_manager.get_user_2fa_status(matched["phone"])
+                                try:
+                                    status_2fa = db_manager.get_user_2fa_status(matched["phone"])
+                                except Exception:
+                                    status_2fa = {"has_2fa": False, "hint": ""}
                                 matched_dict = dict(matched)
                                 if not matched_dict.get("account_id"):
                                     matched_dict["account_id"] = db_manager.generate_unique_account_id("HP-")
@@ -6173,10 +6176,13 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                         else:
                             # If no plate provided, check first driver password
                             d = drivers[0]
-                            if d["password"] != password:
+                            if str(d["password"] or "").strip() != str(password).strip():
                                 resp = {"ok": False, "message": "❌ Parol noto‘g‘ri! Administrator bergan parolni kiriting."}
                             else:
-                                status_2fa = db_manager.get_user_2fa_status(d["phone"])
+                                try:
+                                    status_2fa = db_manager.get_user_2fa_status(d["phone"])
+                                except Exception:
+                                    status_2fa = {"has_2fa": False, "hint": ""}
                                 resp = {
                                     "ok": True,
                                     "user": dict(d),
