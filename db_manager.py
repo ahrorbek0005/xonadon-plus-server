@@ -37,7 +37,8 @@ def ensure_db_columns():
         ("users", "two_step_password", "TEXT DEFAULT NULL"),
         ("users", "two_step_hint", "TEXT DEFAULT NULL"),
         ("users", "home_lat", "REAL DEFAULT NULL"),
-        ("users", "home_lng", "REAL DEFAULT NULL")
+        ("users", "home_lng", "REAL DEFAULT NULL"),
+        ("users", "is_app_registered", "INTEGER DEFAULT 0")
     ]
     for table, col, col_type in migrations:
         try:
@@ -270,7 +271,7 @@ def generate_unique_account_id(prefix="XP-"):
     return f"{prefix}{int(time.time() * 1000) % 1000000:06d}"
 
 # --- USER FUNCTIONS ---
-def register_user(phone, full_name, role='resident', region='qashqadaryo', district='nishon', mfy='koksoy', street='koksoy_markaziy', house_number=''):
+def register_user(phone, full_name, role='resident', region='qashqadaryo', district='nishon', mfy='koksoy', street='koksoy_markaziy', house_number='', account_id=None, is_app_registered=0):
     clean_p = phone.strip()
     conn = get_connection()
     c = conn.cursor()
@@ -279,20 +280,30 @@ def register_user(phone, full_name, role='resident', region='qashqadaryo', distr
     row = c.fetchone()
     if row:
         u_dict = dict(row)
-        if not u_dict.get("account_id"):
-            acc_id = generate_unique_account_id("XP-")
-            c.execute("UPDATE users SET account_id = ? WHERE phone = ?", (acc_id, clean_p))
-            conn.commit()
-            u_dict["account_id"] = acc_id
+        acc_id = account_id or u_dict.get("account_id") or generate_unique_account_id("XP-")
+        c.execute("""
+            UPDATE users SET account_id = ?,
+                             full_name = CASE WHEN ? != '' THEN ? ELSE full_name END,
+                             region = CASE WHEN ? != '' THEN ? ELSE region END,
+                             district = CASE WHEN ? != '' THEN ? ELSE district END,
+                             mfy = CASE WHEN ? != '' THEN ? ELSE mfy END,
+                             street = CASE WHEN ? != '' THEN ? ELSE street END,
+                             is_app_registered = CASE WHEN ? = 1 THEN 1 ELSE is_app_registered END
+            WHERE phone = ?
+        """, (acc_id, full_name, full_name, region, region, district, district, mfy, mfy, street, street, is_app_registered, clean_p))
+        conn.commit()
+        u_dict["account_id"] = acc_id
+        if is_app_registered:
+            u_dict["is_app_registered"] = 1
         conn.close()
         return {"ok": True, "exists": True, "user": u_dict}
 
-    account_id = generate_unique_account_id("XP-")
+    acc_id = account_id or generate_unique_account_id("XP-")
     now_uzb = get_uzb_time_str()
     c.execute("""
-    INSERT INTO users (phone, full_name, role, region, district, mfy, street, house_number, account_id, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (clean_p, full_name, role, region, district, mfy, street, house_number, account_id, now_uzb))
+    INSERT INTO users (phone, full_name, role, region, district, mfy, street, house_number, account_id, is_app_registered, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (clean_p, full_name, role, region, district, mfy, street, house_number, acc_id, is_app_registered, now_uzb))
     conn.commit()
     user_id = c.lastrowid
     conn.close()
@@ -300,7 +311,7 @@ def register_user(phone, full_name, role='resident', region='qashqadaryo', distr
         "ok": True,
         "user": {
             "id": user_id,
-            "account_id": account_id,
+            "account_id": acc_id,
             "phone": clean_p,
             "full_name": full_name,
             "role": role,
@@ -308,7 +319,8 @@ def register_user(phone, full_name, role='resident', region='qashqadaryo', distr
             "district": district,
             "mfy": mfy,
             "street": street,
-            "house_number": house_number
+            "house_number": house_number,
+            "is_app_registered": is_app_registered
         }
     }
 
@@ -837,9 +849,10 @@ def is_bot_admin(chat_id):
 
 
 # --- TWO-STEP VERIFICATION (2FA - TELEGRAM USLUBIDA KALIT SO'Z) ---
-def set_user_2fa(phone, password, hint=""):
-    clean_p = re.sub(r'\D', '', phone)
+def set_user_2fa(phone="", password="", hint="", account_id=""):
+    clean_p = re.sub(r'\D', '', str(phone or ''))
     last9 = clean_p[-9:] if len(clean_p) >= 9 else clean_p
+    acc = str(account_id or '').strip()
     conn = get_connection()
     c = conn.cursor()
     # Ensure drivers table has columns
@@ -852,68 +865,112 @@ def set_user_2fa(phone, password, hint=""):
     except Exception:
         pass
     
-    # Update users
-    c.execute("SELECT id FROM users WHERE phone LIKE ?", (f"%{last9}%",))
-    u = c.fetchone()
-    if u:
+    # 1. Update by account_id first if provided
+    updated = False
+    if acc:
+        c.execute("UPDATE users SET two_step_password = ?, two_step_hint = ? WHERE UPPER(account_id) = UPPER(?)", 
+                  (password.strip(), hint.strip(), acc))
+        if c.rowcount > 0:
+            updated = True
+        c.execute("UPDATE drivers SET two_step_password = ?, two_step_hint = ? WHERE UPPER(account_id) = UPPER(?)", 
+                  (password.strip(), hint.strip(), acc))
+        if c.rowcount > 0:
+            updated = True
+
+    # 2. Update by phone as fallback or supplement
+    if last9:
         c.execute("UPDATE users SET two_step_password = ?, two_step_hint = ? WHERE phone LIKE ?", 
                   (password.strip(), hint.strip(), f"%{last9}%"))
-    else:
-        c.execute("INSERT INTO users (phone, full_name, role, two_step_password, two_step_hint) VALUES (?, ?, 'driver', ?, ?)",
-                  (f"+998{last9}", "Haydovchi", password.strip(), hint.strip()))
-    
-    # Also update drivers table
-    try:
-        c.execute("UPDATE drivers SET two_step_password = ?, two_step_hint = ? WHERE phone LIKE ?",
+        c.execute("UPDATE drivers SET two_step_password = ?, two_step_hint = ? WHERE phone LIKE ?", 
                   (password.strip(), hint.strip(), f"%{last9}%"))
-    except Exception:
-        pass
+
     conn.commit()
     conn.close()
     return {"ok": True, "message": "Ikki bosqichli kalit so‘z muvaffaqiyatli saqlandi!"}
 
-def get_user_2fa_status(phone):
-    clean_p = re.sub(r'\D', '', phone)
+def get_user_2fa_status(phone="", account_id=""):
+    clean_p = re.sub(r'\D', '', str(phone or ''))
     last9 = clean_p[-9:] if len(clean_p) >= 9 else clean_p
+    acc = str(account_id or '').strip()
     conn = get_connection()
     c = conn.cursor()
     row = None
-    try:
-        c.execute("SELECT two_step_password, two_step_hint FROM users WHERE phone LIKE ?", (f"%{last9}%",))
-        row = c.fetchone()
-    except Exception:
-        row = None
-    if not row or not row["two_step_password"]:
+
+    # 1. Search by account_id first
+    if acc:
         try:
-            c.execute("SELECT two_step_password, two_step_hint FROM drivers WHERE phone LIKE ?", (f"%{last9}%",))
+            c.execute("SELECT two_step_password, two_step_hint FROM users WHERE UPPER(account_id) = UPPER(?)", (acc,))
             row = c.fetchone()
         except Exception:
-            pass
+            row = None
+        if not row or not row["two_step_password"]:
+            try:
+                c.execute("SELECT two_step_password, two_step_hint FROM drivers WHERE UPPER(account_id) = UPPER(?)", (acc,))
+                row = c.fetchone()
+            except Exception:
+                row = None
+
+    # 2. Fallback by phone last9
+    if not row or not row["two_step_password"]:
+        if last9:
+            try:
+                c.execute("SELECT two_step_password, two_step_hint FROM users WHERE phone LIKE ?", (f"%{last9}%",))
+                row = c.fetchone()
+            except Exception:
+                row = None
+            if not row or not row["two_step_password"]:
+                try:
+                    c.execute("SELECT two_step_password, two_step_hint FROM drivers WHERE phone LIKE ?", (f"%{last9}%",))
+                    row = c.fetchone()
+                except Exception:
+                    row = None
+
     conn.close()
     if row and row["two_step_password"]:
         return {"has_2fa": True, "hint": row["two_step_hint"] or ""}
     return {"has_2fa": False, "hint": ""}
 
-def verify_user_2fa(phone, password):
-    clean_p = re.sub(r'\D', '', phone)
-    last9 = clean_p[-9:] if len(clean_p) >= 9 else clean_p
-    status = get_user_2fa_status(phone)
+def verify_user_2fa(phone="", password="", account_id=""):
+    status = get_user_2fa_status(phone=phone, account_id=account_id)
     if not status.get("has_2fa"):
         return True
+
+    clean_p = re.sub(r'\D', '', str(phone or ''))
+    last9 = clean_p[-9:] if len(clean_p) >= 9 else clean_p
+    acc = str(account_id or '').strip()
     conn = get_connection()
     c = conn.cursor()
     row = None
-    try:
-        c.execute("SELECT two_step_password FROM users WHERE phone LIKE ?", (f"%{last9}%",))
-        row = c.fetchone()
-    except Exception:
-        row = None
-    if not row or not row["two_step_password"]:
+
+    # 1. Check by account_id
+    if acc:
         try:
-            c.execute("SELECT two_step_password FROM drivers WHERE phone LIKE ?", (f"%{last9}%",))
+            c.execute("SELECT two_step_password FROM users WHERE UPPER(account_id) = UPPER(?)", (acc,))
             row = c.fetchone()
         except Exception:
-            pass
+            row = None
+        if not row or not row["two_step_password"]:
+            try:
+                c.execute("SELECT two_step_password FROM drivers WHERE UPPER(account_id) = UPPER(?)", (acc,))
+                row = c.fetchone()
+            except Exception:
+                row = None
+
+    # 2. Fallback check by phone
+    if not row or not row["two_step_password"]:
+        if last9:
+            try:
+                c.execute("SELECT two_step_password FROM users WHERE phone LIKE ?", (f"%{last9}%",))
+                row = c.fetchone()
+            except Exception:
+                row = None
+            if not row or not row["two_step_password"]:
+                try:
+                    c.execute("SELECT two_step_password FROM drivers WHERE phone LIKE ?", (f"%{last9}%",))
+                    row = c.fetchone()
+                except Exception:
+                    row = None
+
     conn.close()
     if not row or not row["two_step_password"]:
         return True
