@@ -3697,16 +3697,13 @@ def handle_message(msg):
             d_phone = user_sub.get("new_d_phone", "+998912345678")
             d_plate = user_sub.get("new_d_plate", "70M260EB")
 
-            try:
-                res = db_manager.add_driver(
-                    phone=d_phone,
-                    full_name=d_name,
-                    truck_plate=d_plate,
-                    password=d_pass,
-                    assigned_mfy="koksoy"
-                )
-            except Exception as e:
-                res = {"ok": False, "message": f"Bazaga yozishda xatolik: {e}"}
+            res = db_manager.add_driver(
+                phone=d_phone,
+                full_name=d_name,
+                truck_plate=d_plate,
+                password=d_pass,
+                assigned_mfy="koksoy"
+            )
             if not res or not res.get("ok"):
                 err_msg = res.get("message", "Ushbu ma’lumotlar bilan haydovchi qo‘shib bo‘lmadi.") if isinstance(res, dict) else "Xatolik"
                 send_message(chat_id, f"⚠️ <b>{safe_html(err_msg)}</b>", reply_markup=get_admin_reply_keyboard(), parse_mode="HTML")
@@ -4964,20 +4961,6 @@ def handle_callback(cb):
         if cid_str not in subs:
             subs[cid_str] = {"chat_id": chat_id}
 
-        # Unikal va o'zgarmas ID (Account ID) biriktirish
-        acc_id = subs[cid_str].get("account_id")
-        if not acc_id:
-            try:
-                phone_raw = re.sub(r'\D', '', str(subs[cid_str].get("phone") or subs[cid_str].get("raw_phone", "")))
-                u_row = db_manager.get_user_by_phone(phone_raw) if phone_raw else None
-                if u_row and u_row.get("account_id"):
-                    acc_id = u_row["account_id"]
-                else:
-                    acc_id = db_manager.generate_unique_account_id("XP-")
-            except Exception:
-                acc_id = db_manager.generate_unique_account_id("XP-")
-            subs[cid_str]["account_id"] = acc_id
-
         subs[cid_str]["address"] = {
             "region": reg_key,
             "district": dist_key,
@@ -4990,29 +4973,13 @@ def handle_callback(cb):
         try:
             phone_for_db = subs[cid_str].get("phone") or subs[cid_str].get("raw_phone", "")
             if phone_for_db:
-                fn = (subs[cid_str].get("full_name") or subs[cid_str].get("first_name") or "Fuqaro").strip()
-                clean_phone_digits = re.sub(r'\D', '', phone_for_db)
-                clean_phone_db = f"+{clean_phone_digits}" if clean_phone_digits else phone_for_db
-                db_manager.register_user(
-                    phone=clean_phone_db,
-                    full_name=fn,
-                    role="resident",
-                    region=reg_key,
-                    district=dist_key,
-                    mfy=mfy_key,
-                    street=street_key,
-                    house_number="",
-                    account_id=acc_id,
-                    is_app_registered=0
-                )
-                db_manager.update_user_address(phone_for_db, reg_key, dist_key, mfy_key, street_key, house_number="", account_id=acc_id)
+                db_manager.update_user_address(phone_for_db, reg_key, dist_key, mfy_key, street_key, house_number="")
         except Exception as e:
             logger.error(f"Error syncing street to db: {e}")
         save_subscribers(subs)
 
         success_text = (
             f"🎉 <b>MANZILINGIZ MUVAFFAQIYATLI SAQLANDI!</b>\n\n"
-            f"🆔 <b>Maxsus ID:</b> <code>{acc_id}</code>\n"
             f"📍 <b>{safe_html(full_addr)}</b>\n\n"
             f"Endi gaz mashinasi aynan shu ko‘chaga kirganida sizga avtomatik tarzda "
             f"Telegram orqali bildirishnoma yuboriladi.\n\n"
@@ -5080,23 +5047,6 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                     self.wfile.write(f.read())
                 return
             else:
-                # Fallback: extract digits from filename and fetch Base64 from database!
-                try:
-                    import base64
-                    digits = re.sub(r'\D', '', filename)
-                    raw_p = digits[:9] if len(digits) >= 9 else digits
-                    av = db_manager.get_user_avatar(raw_p)
-                    if av and "," in av:
-                        header, encoded = av.split(",", 1)
-                        img_bytes = base64.b64decode(encoded)
-                        self.send_response(200)
-                        self.send_header("Content-Type", "image/jpeg")
-                        self.send_header("Access-Control-Allow-Origin", "*")
-                        self.end_headers()
-                        self.wfile.write(img_bytes)
-                        return
-                except Exception:
-                    pass
                 self.send_response(404)
                 self.send_header("Access-Control-Allow-Origin", "*")
                 self.end_headers()
@@ -5583,11 +5533,15 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                     try:
                         with open(filepath, "wb") as f:
                             f.write(base64.b64decode(encoded))
+                        avatar_url = f"https://xonadon-plus-server.onrender.com/uploads/avatars/{filename}"
                     except Exception as err:
-                        pass
+                        print("Avatar file write failed, using data URL:", err)
+                        avatar_url = image_data
 
-                # Store the permanent Base64 Data URI directly in SQLite database!
-                final_avatar_url = image_data
+                final_avatar_url = avatar_url or image_data
+                if final_avatar_url.startswith("/"):
+                    final_avatar_url = f"https://xonadon-plus-server.onrender.com{final_avatar_url}"
+
                 db_manager.save_user_avatar(phone, role, final_avatar_url, account_id)
                 if role == "driver":
                     current_driver_state["avatar_url"] = final_avatar_url
@@ -5829,6 +5783,51 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                     self.wfile.write(json.dumps({"ok": False, "message": "Telefon raqam noto‘g‘ri!"}).encode("utf-8"))
                     return
 
+                # If action is login, check if user exists in database
+                if action == "login":
+                    user = db_manager.get_user_by_phone(f"+{raw_phone}") or db_manager.get_user_by_phone(raw_phone)
+                    if not user:
+                        conn = db_manager.get_connection()
+                        c = conn.cursor()
+                        c.execute("SELECT * FROM users WHERE phone LIKE ?", (f"%{raw_phone[-9:]}%",))
+                        user = c.fetchone()
+                        conn.close()
+
+                    if not user:
+                        self.send_response(200)
+                        self.send_header("Content-Type", "application/json")
+                        self.send_header("Access-Control-Allow-Origin", "*")
+                        self.end_headers()
+                        self.wfile.write(json.dumps({
+                            "ok": False,
+                            "not_registered": True,
+                            "message": "❌ Bu telefon raqam tizimda ro‘yxatdan o‘tmagan! Iltimos, avval «Ro‘yxatdan o‘tish» bo‘limiga o‘ting."
+                        }).encode("utf-8"))
+                        return
+                
+                # If action is register, prevent registering an already registered phone
+                elif action == "register":
+                    conn = db_manager.get_connection()
+                    c = conn.cursor()
+                    c.execute("SELECT * FROM users WHERE phone LIKE ?", (f"%{raw_phone[-9:]}%",))
+                    existing_user = c.fetchone()
+                    if not existing_user:
+                        c.execute("SELECT * FROM drivers WHERE phone LIKE ?", (f"%{raw_phone[-9:]}%",))
+                        existing_user = c.fetchone()
+                    conn.close()
+
+                    if existing_user:
+                        self.send_response(200)
+                        self.send_header("Content-Type", "application/json")
+                        self.send_header("Access-Control-Allow-Origin", "*")
+                        self.end_headers()
+                        self.wfile.write(json.dumps({
+                            "ok": False,
+                            "already_registered": True,
+                            "message": "❌ Ushbu telefon raqam allaqachon ro‘yxatdan o‘tgan! Iltimos, «Kirish» bo‘limiga o‘ting."
+                        }).encode("utf-8"))
+                        return
+
                 # Check if phone is linked to Telegram bot
                 subs = load_subscribers()
                 target_chat_id = None
@@ -5852,93 +5851,6 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                         "message": "⚠️ Ushbu telefon raqam Telegram botimizga hali ulanmagan!\n\nIltimos, Telegramda @xonadon_plus_bot ga kiring, /start bosing va telefon raqamingizni yuboring."
                     }).encode("utf-8"))
                     return
-
-                # Check if user has finished registration in Telegram bot (name + full address saved)
-                is_fully_registered = False
-                if target_sub:
-                    addr = target_sub.get("address") or {}
-                    fn = (target_sub.get("full_name") or target_sub.get("first_name") or "").strip()
-                    if fn and fn != "Fuqaro" and addr.get("region") and addr.get("mfy") and addr.get("street"):
-                        is_fully_registered = True
-
-                if not is_fully_registered:
-                    db_u = db_manager.get_user_by_phone(raw_phone)
-                    if db_u:
-                        fn = (db_u.get("full_name") or "").strip()
-                        if fn and fn != "Fuqaro" and db_u.get("mfy") and db_u.get("street"):
-                            is_fully_registered = True
-
-                if not is_fully_registered:
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/json")
-                    self.send_header("Access-Control-Allow-Origin", "*")
-                    self.end_headers()
-                    self.wfile.write(json.dumps({
-                        "ok": False,
-                        "bot_unregistered": True,
-                        "message": "⚠️ Siz hali Telegram botimizda (@xonadon_plus_bot) ro‘yxatdan o‘tishni to‘liq yakunlamagansiz!\n\nIltimos, avval botga ism-familiyangiz va yashash manzilingizni to‘liq kiriting. «MANZILINGIZ MUVAFFAQIYATLI SAQLANDI» xabarini olganingizdan so‘ng ilovaga kira olasiz."
-                    }).encode("utf-8"))
-                    return
-
-                # If action is login, check if user has registered in the mobile app
-                if action == "login":
-                    conn = db_manager.get_connection()
-                    c = conn.cursor()
-                    c.execute("SELECT is_app_registered FROM users WHERE phone LIKE ?", (f"%{raw_phone[-9:]}%",))
-                    u_row = c.fetchone()
-                    if not u_row:
-                        c.execute("SELECT id FROM drivers WHERE phone LIKE ?", (f"%{raw_phone[-9:]}%",))
-                        u_row = c.fetchone()
-                    conn.close()
-
-                    if not u_row or (dict(u_row).get("is_app_registered") is not None and u_row["is_app_registered"] != 1):
-                        self.send_response(200)
-                        self.send_header("Content-Type", "application/json")
-                        self.send_header("Access-Control-Allow-Origin", "*")
-                        self.end_headers()
-                        self.wfile.write(json.dumps({
-                            "ok": False,
-                            "not_registered": True,
-                            "message": "❌ Bu telefon raqam ilovada ro‘yxatdan o‘tmagan! Iltimos, avval «Ro‘yxatdan o‘tish» bo‘limiga o‘ting."
-                        }).encode("utf-8"))
-                        return
-
-                # If action is register, check name match with bot and prevent duplicate app registration
-                elif action == "register":
-                    bot_fn = str((target_sub and (target_sub.get("full_name") or target_sub.get("first_name"))) or "").strip()
-                    input_name = str(data.get("full_name") or f"{data.get('first_name', '')} {data.get('last_name', '')}").strip()
-                    if input_name and bot_fn and bot_fn != "Fuqaro":
-                        input_words = [w.lower() for w in re.findall(r'\w+', input_name)]
-                        bot_words = [w.lower() for w in re.findall(r'\w+', bot_fn)]
-                        if not any(iw in bot_words or any(iw in bw for bw in bot_words) for iw in input_words):
-                            self.send_response(200)
-                            self.send_header("Content-Type", "application/json")
-                            self.send_header("Access-Control-Allow-Origin", "*")
-                            self.end_headers()
-                            self.wfile.write(json.dumps({
-                                "ok": False,
-                                "name_mismatch": True,
-                                "message": f"❌ Kiritilgan ism Telegram botdagi ismingizga mos kelmadi!\n\nBotdagi ismingiz: {bot_fn}\nIltimos, ism va familiyangizni botdagi kabi kiriting."
-                            }).encode("utf-8"))
-                            return
-
-                    conn = db_manager.get_connection()
-                    c = conn.cursor()
-                    c.execute("SELECT is_app_registered FROM users WHERE phone LIKE ?", (f"%{raw_phone[-9:]}%",))
-                    existing_user = c.fetchone()
-                    conn.close()
-
-                    if existing_user and existing_user["is_app_registered"] == 1:
-                        self.send_response(200)
-                        self.send_header("Content-Type", "application/json")
-                        self.send_header("Access-Control-Allow-Origin", "*")
-                        self.end_headers()
-                        self.wfile.write(json.dumps({
-                            "ok": False,
-                            "already_registered": True,
-                            "message": "❌ Ushbu telefon raqam allaqachon ilovada ro‘yxatdan o‘tgan! Iltimos, «Kirish» bo‘limiga o‘ting."
-                        }).encode("utf-8"))
-                        return
 
                 # Generate 4-digit code
                 code = f"{random.randint(1000, 9999)}"
@@ -6000,38 +5912,21 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                     fn = reg_data.get("first_name", "").strip()
                     ln = reg_data.get("last_name", "").strip()
                     full_name = f"{fn} {ln}".strip() or "Fuqaro"
-
-                    subs = load_subscribers()
-                    target_sub = None
-                    for cid, s in subs.items():
-                        s_phone = re.sub(r'\D', '', str(s.get("phone", "") or s.get("raw_phone", "")))
-                        if s_phone and (s_phone == raw_phone or s_phone.endswith(raw_phone[-9:]) or raw_phone.endswith(s_phone[-9:])):
-                            target_sub = s
-                            break
-
-                    addr = target_sub.get("address", {}) if target_sub else {}
-                    acc_id = (target_sub and target_sub.get("account_id")) or None
-                    if not acc_id:
-                        acc_id = db_manager.generate_unique_account_id("XP-")
-                        if target_sub:
-                            target_sub["account_id"] = acc_id
-                            save_subscribers(subs)
-
                     res = db_manager.register_user(
                         phone=f"+{raw_phone}",
                         full_name=full_name,
                         role="resident",
-                        region=addr.get("region", ""),
-                        district=addr.get("district", ""),
-                        mfy=addr.get("mfy", ""),
-                        street=addr.get("street", ""),
-                        house_number=addr.get("house", ""),
-                        account_id=acc_id,
-                        is_app_registered=1
+                        region="",
+                        district="",
+                        mfy="",
+                        street="",
+                        house_number=""
                     )
-                    user_obj = res.get("user") or {}
-                    user_obj["account_id"] = acc_id
-                    user_obj["is_app_registered"] = 1
+                    user_obj = res.get("user")
+                    if not user_obj:
+                        user_obj = {"phone": f"+{raw_phone}", "full_name": full_name, "role": "resident", "account_id": db_manager.generate_unique_account_id("XP-")}
+                    elif not user_obj.get("account_id"):
+                        user_obj["account_id"] = db_manager.generate_unique_account_id("XP-")
 
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
@@ -6040,70 +5935,36 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                     self.wfile.write(json.dumps({
                         "ok": True,
                         "action": "register",
-                        "registered": True,
-                        "message": "Siz muvaffaqiyatli ro‘yxatdan o‘tdingiz!",
-                        "account_id": acc_id,
                         "user": user_obj
                     }).encode("utf-8"))
                     return
                 else:
                     # Login
-                    subs = load_subscribers()
-                    target_sub = None
-                    for cid, s in subs.items():
-                        s_phone = re.sub(r'\D', '', str(s.get("phone", "") or s.get("raw_phone", "")))
-                        if s_phone and (s_phone == raw_phone or s_phone.endswith(raw_phone[-9:]) or raw_phone.endswith(s_phone[-9:])):
-                            target_sub = s
-                            break
-
-                    is_fully_registered = False
-                    if target_sub:
-                        addr = target_sub.get("address") or {}
-                        fn = (target_sub.get("full_name") or target_sub.get("first_name") or "").strip()
-                        if fn and fn != "Fuqaro" and addr.get("region") and addr.get("mfy") and addr.get("street"):
-                            is_fully_registered = True
-
                     user = db_manager.get_user_by_phone(f"+{raw_phone}") or db_manager.get_user_by_phone(raw_phone)
+                    if not user:
+                        conn = db_manager.get_connection()
+                        c = conn.cursor()
+                        c.execute("SELECT * FROM users WHERE phone LIKE ?", (f"%{raw_phone[-9:]}%",))
+                        user = c.fetchone()
+                        conn.close()
+                    
                     if user:
                         user_dict = dict(user)
-                        fn = (user_dict.get("full_name") or "").strip()
-                        if fn and fn != "Fuqaro" and user_dict.get("mfy") and user_dict.get("street"):
-                            is_fully_registered = True
                     else:
-                        user_dict = None
-
-                    if not is_fully_registered:
-                        self.send_response(200)
-                        self.send_header("Content-Type", "application/json")
-                        self.send_header("Access-Control-Allow-Origin", "*")
-                        self.end_headers()
-                        self.wfile.write(json.dumps({
-                            "ok": False,
-                            "bot_unregistered": True,
-                            "message": "⚠️ Siz hali Telegram botimizda (@xonadon_plus_bot) ro‘yxatdan o‘tishni to‘liq yakunlamagansiz!\n\nIltimos, avval botga ism-familiyangiz va yashash manzilingizni to‘liq kiriting. «MANZILINGIZ MUVAFFAQIYATLI SAQLANDI» xabarini olganingizdan so‘ng ilovaga kira olasiz."
-                        }).encode("utf-8"))
-                        return
-
-                    if not user_dict and target_sub:
-                        addr = target_sub.get("address") or {}
-                        fn = (target_sub.get("full_name") or target_sub.get("first_name") or "Fuqaro").strip()
-                        acc_id = target_sub.get("account_id") or db_manager.generate_unique_account_id("XP-")
                         reg_res = db_manager.register_user(
                             phone=f"+{raw_phone}",
-                            full_name=fn,
+                            full_name="Fuqaro",
                             role="resident",
-                            region=addr.get("region", ""),
-                            district=addr.get("district", ""),
-                            mfy=addr.get("mfy", ""),
-                            street=addr.get("street", ""),
-                            house_number=addr.get("house", ""),
-                            account_id=acc_id,
-                            is_app_registered=1
+                            region="",
+                            district="",
+                            mfy="",
+                            street="",
+                            house_number=""
                         )
-                        user_dict = reg_res.get("user") or db_manager.get_user_by_phone(raw_phone)
+                        user_dict = reg_res.get("user") or {"phone": f"+{raw_phone}", "full_name": "Fuqaro", "role": "resident", "account_id": db_manager.generate_unique_account_id("XP-")}
 
                     if not user_dict.get("account_id"):
-                        user_dict["account_id"] = (target_sub and target_sub.get("account_id")) or db_manager.generate_unique_account_id("XP-")
+                        user_dict["account_id"] = db_manager.generate_unique_account_id("XP-")
                         try:
                             conn = db_manager.get_connection()
                             c = conn.cursor()
@@ -6134,17 +5995,15 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                                             district=user_dict["district"],
                                             mfy=user_dict["mfy"],
                                             street=user_dict["street"],
-                                            house_number=user_dict["house_number"],
-                                            account_id=user_dict["account_id"]
+                                            house_number=user_dict["house_number"]
                                         )
                                         break
                         except Exception as _sub_err:
                             print("[SUB ADDR BACKFILL ERROR]:", _sub_err)
 
-                    user_acc = user_dict.get("account_id", "")
-                    status_2fa = db_manager.get_user_2fa_status(phone=f"+{raw_phone}", account_id=user_acc)
+                    status_2fa = db_manager.get_user_2fa_status(f"+{raw_phone}")
                     if not status_2fa.get("has_2fa"):
-                        status_2fa = db_manager.get_user_2fa_status(phone=raw_phone, account_id=user_acc)
+                        status_2fa = db_manager.get_user_2fa_status(raw_phone)
 
                     self.send_response(200)
                     self.send_header("Content-Type", "application/json")
@@ -6154,7 +6013,6 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                         "ok": True,
                         "action": "login",
                         "user": user_dict,
-                        "account_id": user_acc,
                         "require_2fa": status_2fa.get("has_2fa", False),
                         "hint": status_2fa.get("hint", "")
                     }).encode("utf-8"))
@@ -6206,8 +6064,7 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 phone = data.get("phone", "").strip()
                 passw = data.get("password", "").strip()
                 hint = data.get("hint", "").strip()
-                account_id = data.get("account_id", "").strip()
-                res = db_manager.set_user_2fa(phone=phone, password=passw, hint=hint, account_id=account_id)
+                res = db_manager.set_user_2fa(phone, passw, hint)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Access-Control-Allow-Origin", "*")
@@ -6229,8 +6086,7 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                 data = json.loads(body)
                 phone = data.get("phone", "").strip()
                 passw = data.get("password", "").strip()
-                account_id = data.get("account_id", "").strip()
-                is_valid = db_manager.verify_user_2fa(phone=phone, password=passw, account_id=account_id)
+                is_valid = db_manager.verify_user_2fa(phone, passw)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Access-Control-Allow-Origin", "*")
@@ -6297,16 +6153,13 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                                     break
                             if not matched:
                                 resp = {"ok": False, "message": "❌ Mashina davlat raqami mos kelmadi! Administrator kiritgan raqamni kiriting."}
-                            elif str(matched["password"] or "").strip() != str(password).strip():
+                            elif matched["password"] != password:
                                 resp = {"ok": False, "message": "❌ Parol noto‘g‘ri! Administrator bergan parolni kiriting."}
                             else:
+                                status_2fa = db_manager.get_user_2fa_status(matched["phone"])
                                 matched_dict = dict(matched)
                                 if not matched_dict.get("account_id"):
                                     matched_dict["account_id"] = db_manager.generate_unique_account_id("HP-")
-                                try:
-                                    status_2fa = db_manager.get_user_2fa_status(matched["phone"], account_id=matched_dict.get("account_id"))
-                                except Exception:
-                                    status_2fa = {"has_2fa": False, "hint": ""}
                                 matched_dict["avatar_url"] = matched_dict.get("avatar_url") or db_manager.get_user_avatar(matched["phone"], "driver", matched_dict.get("account_id", ""))
                                 resp = {
                                     "ok": True,
@@ -6317,13 +6170,10 @@ class AlertApiHandler(BaseHTTPRequestHandler):
                         else:
                             # If no plate provided, check first driver password
                             d = drivers[0]
-                            if str(d["password"] or "").strip() != str(password).strip():
+                            if d["password"] != password:
                                 resp = {"ok": False, "message": "❌ Parol noto‘g‘ri! Administrator bergan parolni kiriting."}
                             else:
-                                try:
-                                    status_2fa = db_manager.get_user_2fa_status(d["phone"])
-                                except Exception:
-                                    status_2fa = {"has_2fa": False, "hint": ""}
+                                status_2fa = db_manager.get_user_2fa_status(d["phone"])
                                 resp = {
                                     "ok": True,
                                     "user": dict(d),
@@ -7480,11 +7330,11 @@ def generate_drivers_excel():
         "Maxsus ID",
         "Haydovchining ism-familiyasi",
         "Telefon raqami",
-        "Parol",
         "Davlat raqami",
         "Mashina rusumi",
         "Mashina rangi",
-        "Ro‘yxatdan o‘tgan sana"
+        "Ro‘yxatdan o‘tgan sana",
+        "Parol"
     ]
 
     prepared_rows = []
@@ -7497,7 +7347,7 @@ def generate_drivers_excel():
         color = d.get("truck_color") or "Oq"
         created_dt = format_uzb_timestamp(d.get("created_at"))
         pwd = d.get("password") or ""
-        prepared_rows.append([idx, d_id, fname, phone, pwd, plate, model, color, created_dt])
+        prepared_rows.append([idx, d_id, fname, phone, plate, model, color, created_dt, pwd])
 
     try:
         import openpyxl
