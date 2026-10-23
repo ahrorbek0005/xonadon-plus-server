@@ -955,7 +955,8 @@ def save_user_avatar(phone, role, avatar_url, account_id=""):
             c.execute("UPDATE drivers SET avatar_url = ? WHERE phone LIKE ?", (avatar_url, f"%{clean_p[-9:]}%"))
             c.execute("UPDATE driver_live SET updated_at = (datetime('now', '+5 hours')), avatar_url = ? WHERE phone LIKE ?", (avatar_url, f"%{clean_p[-9:]}%"))
         if acc_clean:
-            c.execute("UPDATE drivers SET avatar_url = ? WHERE UPPER(account_id) = UPPER(?)", (avatar_url, acc_clean))
+            c.execute("UPDATE drivers SET avatar_url = ? WHERE (UPPER(account_id) = UPPER(?) OR UPPER(account_id) = ?)", 
+                      (avatar_url, acc_clean, f"HP-{acc_clean.replace('HP-', '')}"))
             c.execute("UPDATE driver_live SET avatar_url = ? WHERE UPPER(driver_name) LIKE ? OR UPPER(truck_plate) LIKE ?", (avatar_url, f"%{acc_clean}%", f"%{acc_clean}%"))
     else:
         if clean_p:
@@ -974,7 +975,8 @@ def get_user_avatar(phone, role='resident', account_id=''):
     # 1. Check by account_id in drivers
     if acc_clean:
         try:
-            c.execute("SELECT avatar_url FROM drivers WHERE UPPER(account_id) = UPPER(?) AND avatar_url != ''", (acc_clean,))
+            c.execute("SELECT avatar_url FROM drivers WHERE (UPPER(account_id) = UPPER(?) OR UPPER(account_id) = ? OR account_id LIKE ?) AND avatar_url IS NOT NULL AND avatar_url != ''", 
+                      (acc_clean, f"HP-{acc_clean.replace('HP-', '')}", f"%{acc_clean}%"))
             r = c.fetchone()
             if r and r["avatar_url"]:
                 conn.close()
