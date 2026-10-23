@@ -38,9 +38,13 @@ def ensure_db_columns():
     for table, col, col_type in migrations:
         try:
             c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
+            conn.commit()
         except Exception:
             pass
-    conn.commit()
+    try:
+        conn.commit()
+    except Exception:
+        pass
     conn.close()
 
 
@@ -283,29 +287,48 @@ def generate_unique_account_id(prefix="XP-"):
 # --- USER FUNCTIONS ---
 def register_user(phone, full_name, role='resident', region='qashqadaryo', district='nishon', mfy='koksoy', street='koksoy_markaziy', house_number=''):
     clean_p = phone.strip()
+    digits = re.sub(r'\D', '', clean_p)
+    last9 = digits[-9:] if len(digits) >= 9 else digits
     conn = get_connection()
     c = conn.cursor()
-    # Check if exists
-    c.execute("SELECT * FROM users WHERE phone = ?", (clean_p,))
-    row = c.fetchone()
+    # Check if exists by exact phone or last9 digits
+    row = None
+    if last9:
+        c.execute("SELECT * FROM users WHERE phone = ? OR phone LIKE ?", (clean_p, f"%{last9}%"))
+        row = c.fetchone()
+    else:
+        c.execute("SELECT * FROM users WHERE phone = ?", (clean_p,))
+        row = c.fetchone()
+
     if row:
         u_dict = dict(row)
-        if not u_dict.get("account_id"):
+        acc_id = u_dict.get("account_id")
+        if not acc_id:
             acc_id = generate_unique_account_id("XP-")
-            c.execute("UPDATE users SET account_id = ? WHERE phone = ?", (acc_id, clean_p))
-            conn.commit()
             u_dict["account_id"] = acc_id
+        c.execute("UPDATE users SET full_name = ?, account_id = ? WHERE id = ?", (full_name, acc_id, u_dict["id"]))
+        conn.commit()
+        u_dict["full_name"] = full_name
         conn.close()
         return {"ok": True, "exists": True, "user": u_dict}
 
     account_id = generate_unique_account_id("XP-")
     now_uzb = get_uzb_time_str()
-    c.execute("""
-    INSERT INTO users (phone, full_name, role, region, district, mfy, street, house_number, account_id, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (clean_p, full_name, role, region, district, mfy, street, house_number, account_id, now_uzb))
-    conn.commit()
-    user_id = c.lastrowid
+    try:
+        c.execute("""
+        INSERT INTO users (phone, full_name, role, region, district, mfy, street, house_number, account_id, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (clean_p, full_name, role, region, district, mfy, street, house_number, account_id, now_uzb))
+        conn.commit()
+        user_id = c.lastrowid
+    except sqlite3.IntegrityError:
+        c.execute("SELECT * FROM users WHERE phone = ? OR phone LIKE ?", (clean_p, f"%{last9}%"))
+        row = c.fetchone()
+        u_dict = dict(row)
+        user_id = u_dict["id"]
+        account_id = u_dict.get("account_id") or account_id
+        c.execute("UPDATE users SET full_name = ?, account_id = ? WHERE id = ?", (full_name, account_id, user_id))
+        conn.commit()
     conn.close()
     return {
         "ok": True,

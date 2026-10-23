@@ -9,6 +9,9 @@ import os
 import sys
 import tempfile
 import traceback
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("xonadon_bot")
 import db_manager
 db_manager.init_db()
 import time
@@ -4111,7 +4114,7 @@ def handle_message(msg):
                 acc_id = u_reg["user"].get("account_id")
                 db_manager.update_user_name(phone_to_reg, acc_id, clean_name)
         except Exception as e:
-            logger.error(f"Error registering resident name: {e}")
+            print(f"Error registering resident name: {e}")
 
         if acc_id:
             user_sub["account_id"] = acc_id
