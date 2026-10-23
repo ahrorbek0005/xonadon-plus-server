@@ -107,12 +107,31 @@ def ensure_uzb_timezone_migration():
                 print(f"[TZ MIGRATION INNER ERROR]: {e_mig}")
         conn.close()
     except Exception as e_out:
-        print(f"[TZ MIGRATION ERROR]: {e_out}")
+def purge_legacy_test_drivers():
+    """Barcha eski sinov haydovchilari (ahror, 940401009 yoki account_id yo'q) serverdan butunlay tozalab tashlanadi"""
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+        c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='drivers'")
+        if c.fetchone():
+            c.execute("DELETE FROM drivers WHERE phone LIKE '%940401009%' OR account_id = '' OR account_id IS NULL OR lower(full_name) LIKE '%ahror%'")
+            c.execute("DELETE FROM driver_live WHERE phone LIKE '%940401009%' OR lower(driver_name) LIKE '%ahror%'")
+            c.execute("DELETE FROM users WHERE (phone LIKE '%940401009%' OR lower(full_name) LIKE '%ahror%') AND role = 'driver'")
+            c.execute("DELETE FROM user_avatars WHERE phone_clean LIKE '%940401009%'")
+            conn.commit()
+            try:
+                c.execute("VACUUM")
+            except Exception:
+                pass
+        conn.close()
+    except Exception as e:
+        print(f"[PURGE ERROR]: {e}")
 
-# Auto-run migration whenever module is loaded
+# Auto-run migration and purge whenever module is loaded
 try:
     ensure_db_columns()
     ensure_uzb_timezone_migration()
+    purge_legacy_test_drivers()
 except Exception as _e:
     pass
 
@@ -236,6 +255,10 @@ def init_db():
 
     conn.commit()
     conn.close()
+    try:
+        purge_legacy_test_drivers()
+    except Exception:
+        pass
     print("Database initialized successfully at:", DB_PATH)
 
 
@@ -654,9 +677,13 @@ def update_driver_profile(account_phone, driver_name=None, truck_plate=None, tru
     return True
 
 def get_all_drivers():
+    try:
+        purge_legacy_test_drivers()
+    except Exception:
+        pass
     conn = get_connection()
     c = conn.cursor()
-    c.execute("SELECT * FROM drivers WHERE is_active = 1 ORDER BY id DESC")
+    c.execute("SELECT * FROM drivers WHERE is_active = 1 AND phone NOT LIKE '%940401009%' AND lower(full_name) NOT LIKE '%ahror%' AND account_id != '' AND account_id IS NOT NULL ORDER BY id DESC")
     rows = c.fetchall()
     conn.close()
     return [dict(r) for r in rows]
@@ -677,6 +704,10 @@ def clear_all_drivers_and_trucks():
     c.execute("UPDATE users SET two_step_password = NULL, two_step_hint = NULL")
     c.execute("DELETE FROM sessions")
     conn.commit()
+    try:
+        c.execute("VACUUM")
+    except Exception:
+        pass
     conn.close()
     return True
 

@@ -3693,9 +3693,15 @@ def handle_message(msg):
         # 4-bosqich: Parol kiritildi -> Bazaga saqlash va yakunlash
         if user_sub.get("admin_state") == "awaiting_driver_password":
             d_pass = text.strip()
-            d_name = user_sub.get("new_d_name", "Haydovchi")
-            d_phone = user_sub.get("new_d_phone", "+998912345678")
-            d_plate = user_sub.get("new_d_plate", "70M260EB")
+            d_name = user_sub.get("new_d_name")
+            d_phone = user_sub.get("new_d_phone")
+            d_plate = user_sub.get("new_d_plate")
+
+            if not d_name or not d_phone or not d_plate:
+                send_message(chat_id, "⚠️ <b>Ma’lumotlar to‘liq kiritilmadi!</b> Iltimos, qaytadan urinib ko‘ring.", reply_markup=get_admin_reply_keyboard(), parse_mode="HTML")
+                user_sub.pop("admin_state", None)
+                save_subscribers(subs)
+                return
 
             res = db_manager.add_driver(
                 phone=d_phone,
@@ -7319,7 +7325,13 @@ def build_drivers_pure_xlsx(filepath, title, subtitle, headers, rows):
 
 
 def generate_drivers_excel():
-    drivers = db_manager.get_all_drivers()
+    raw_drivers = db_manager.get_all_drivers()
+    drivers = [
+        d for d in raw_drivers
+        if '940401009' not in str(d.get('phone', ''))
+        and 'ahror' not in str(d.get('full_name', '')).lower()
+        and str(d.get('account_id', '')).strip() != ''
+    ]
     ts = get_uzb_time_str("%Y%m%d_%H%M%S")
     tfile = os.path.join(tempfile.gettempdir(), f"Haydovchilar_royxati_{ts}.xlsx")
 
