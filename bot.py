@@ -3677,7 +3677,7 @@ def handle_message(msg):
             prompt = (
                 f"🚛 <b>Mashina raqami:</b> <code>{clean_plate}</code> ✅\n\n"
                 "4️⃣ Endi haydovchining <b>Maxsus kirish parolini</b> kiriting:\n"
-                "<i>(Masalan: GAZ2026 yoki ahror2005)</i>"
+                "<i>(Masalan: GAZ2026 yoki gaz2026)</i>"
             )
             send_message(chat_id, prompt, parse_mode="HTML")
             return
@@ -4694,7 +4694,7 @@ def handle_callback(cb):
             "truck_model": "🚚 Mashinaning yangi <b>Rusumini</b> kiriting:\n<i>(Masalan: Isuzu yoki Isuzu NPR 75)</i>",
             "truck_color": "🎨 Mashinaning yangi <b>Rangini</b> kiriting:\n<i>(Masalan: Oq yoki Oq (Sariq chiziqli))</i>",
             "truck_plate": "🚛 Mashinaning yangi <b>Davlat raqamini</b> kiriting:\n<i>(Masalan: 01A123AA yoki 01123AAA)</i>",
-            "password": "🔑 Yangi <b>Kirish parolini</b> kiriting:\n<i>(Masalan: ahror2005)</i>"
+            "password": "🔑 Yangi <b>Kirish parolini</b> kiriting:\n<i>(Masalan: GAZ2026 yoki gaz2026)</i>"
         }
         send_message(chat_id, prompts.get(field, "Yangi qiymatni kiriting:"), parse_mode="HTML")
         return
@@ -7250,8 +7250,8 @@ def build_drivers_pure_xlsx(filepath, title, subtitle, headers, rows):
   </cellXfs>
 </styleSheet>'''
 
-    col_letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
-    col_widths = [6, 16, 30, 18, 18, 18, 16, 22]
+    col_letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I']
+    col_widths = [6, 16, 30, 18, 18, 18, 16, 22, 16]
     sheet_lines = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
                    '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">',
                    '<sheetViews><sheetView tabSelected="1" workbookViewId="0" showGridLines="1"/></sheetViews>',
@@ -7291,10 +7291,10 @@ def build_drivers_pure_xlsx(filepath, title, subtitle, headers, rows):
 
     sheet_lines.append('</sheetData>')
     sheet_lines.append('<mergeCells count="2">')
-    sheet_lines.append('<mergeCell ref="A1:H1"/>')
-    sheet_lines.append('<mergeCell ref="A2:H2"/>')
+    sheet_lines.append('<mergeCell ref="A1:I1"/>')
+    sheet_lines.append('<mergeCell ref="A2:I2"/>')
     if not rows:
-        sheet_lines.append('<mergeCell ref="A5:H5"/>')
+        sheet_lines.append('<mergeCell ref="A5:I9"/>')
     sheet_lines.append('</mergeCells>')
     sheet_lines.append('</worksheet>')
     sheet1_xml = '\n'.join(sheet_lines)
@@ -7325,7 +7325,8 @@ def generate_drivers_excel():
         "Davlat raqami",
         "Mashina rusumi",
         "Mashina rangi",
-        "Ro‘yxatdan o‘tgan sana"
+        "Ro‘yxatdan o‘tgan sana",
+        "Parol"
     ]
 
     prepared_rows = []
@@ -7337,7 +7338,8 @@ def generate_drivers_excel():
         model = d.get("truck_model") or "Isuzu"
         color = d.get("truck_color") or "Oq"
         created_dt = format_uzb_timestamp(d.get("created_at"))
-        prepared_rows.append([idx, d_id, fname, phone, plate, model, color, created_dt])
+        pwd = d.get("password") or ""
+        prepared_rows.append([idx, d_id, fname, phone, plate, model, color, created_dt, pwd])
 
     try:
         import openpyxl
@@ -7350,7 +7352,7 @@ def generate_drivers_excel():
         ws.views.sheetView[0].showGridLines = True
 
         # 1-qator: Sarlavha banneri
-        ws.merge_cells("A1:H1")
+        ws.merge_cells("A1:I1")
         t_cell = ws["A1"]
         t_cell.value = title_text
         t_cell.font = Font(name="Calibri", size=13, bold=True, color="FFFFFF")
@@ -7359,7 +7361,7 @@ def generate_drivers_excel():
         ws.row_dimensions[1].height = 36
 
         # 2-qator: Sana va statistika
-        ws.merge_cells("A2:H2")
+        ws.merge_cells("A2:I2")
         s_cell = ws["A2"]
         s_cell.value = subtitle_text
         s_cell.font = Font(name="Calibri", size=10, italic=True, color="475569")
@@ -7403,7 +7405,7 @@ def generate_drivers_excel():
                         c.alignment = Alignment(horizontal="left", vertical="center")
                 row_idx += 1
         else:
-            ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=8)
+            ws.merge_cells(start_row=row_idx, start_column=1, end_row=row_idx, end_column=9)
             c = ws.cell(row=row_idx, column=1)
             c.value = "Hozircha tizimda ro‘yxatdan o‘tgan haydovchilar mavjud emas."
             c.font = Font(name="Calibri", size=10, italic=True, color="64748B")
