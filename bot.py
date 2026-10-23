@@ -3706,13 +3706,17 @@ def handle_message(msg):
                 save_subscribers(subs)
                 return
 
-            res = db_manager.add_driver(
-                phone=d_phone,
-                full_name=d_name,
-                truck_plate=d_plate,
-                password=d_pass,
-                assigned_mfy="koksoy"
-            )
+            try:
+                res = db_manager.add_driver(
+                    phone=d_phone,
+                    full_name=d_name,
+                    truck_plate=d_plate,
+                    password=d_pass,
+                    assigned_mfy="koksoy"
+                )
+            except Exception as e:
+                print(f"Error in add_driver call: {e}")
+                res = {"ok": False, "message": f"Bazaga yozishda xatolik: {e}"}
             if not res or not res.get("ok"):
                 err_msg = res.get("message", "Ushbu ma’lumotlar bilan haydovchi qo‘shib bo‘lmadi.") if isinstance(res, dict) else "Xatolik"
                 send_message(chat_id, f"⚠️ <b>{safe_html(err_msg)}</b>", reply_markup=get_admin_reply_keyboard(), parse_mode="HTML")
@@ -7328,13 +7332,7 @@ def build_drivers_pure_xlsx(filepath, title, subtitle, headers, rows):
 
 
 def generate_drivers_excel():
-    raw_drivers = db_manager.get_all_drivers()
-    drivers = [
-        d for d in raw_drivers
-        if '940401009' not in str(d.get('phone', ''))
-        and 'ahror' not in str(d.get('full_name', '')).lower()
-        and str(d.get('account_id', '')).strip() != ''
-    ]
+    drivers = db_manager.get_all_drivers()
     ts = get_uzb_time_str("%Y%m%d_%H%M%S")
     tfile = os.path.join(tempfile.gettempdir(), f"Haydovchilar_royxati_{ts}.xlsx")
 

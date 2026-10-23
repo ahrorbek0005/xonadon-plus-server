@@ -14,5 +14,22 @@
       "street": "istiqlol",
       "street_label": "Qashqadaryo viloyati, Nishon tumani, «Yangi Nishon» MFY, Istiqlol ko‘chasi"
     }
+  },
+  "1838588800": {
+    "chat_id": 1838588800,
+    "first_name": "Ahror",
+    "username": "axrorbek_o5",
+    "registered_at": "2026-10-23 10:49:49",
+    "phone_verified": false,
+    "status": "unverified",
+    "phone": null,
+    "address": {
+      "region": "qashqadaryo",
+      "district": "nishon",
+      "mfy": "yangi_nishon",
+      "street": "istiqlol",
+      "street_label": "Qashqadaryo viloyati, Nishon tumani, «Yangi Nishon» MFY, Istiqlol ko‘chasi"
+    },
+    "is_admin_active": true
   }
 }

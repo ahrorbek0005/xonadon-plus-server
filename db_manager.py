@@ -29,9 +29,13 @@ def ensure_db_columns():
     migrations = [
         ("drivers", "avatar_url", "TEXT DEFAULT ''"),
         ("drivers", "account_id", "TEXT DEFAULT ''"),
+        ("drivers", "two_step_password", "TEXT DEFAULT NULL"),
+        ("drivers", "two_step_hint", "TEXT DEFAULT NULL"),
         ("driver_live", "avatar_url", "TEXT DEFAULT ''"),
         ("users", "avatar_url", "TEXT DEFAULT ''"),
         ("users", "account_id", "TEXT DEFAULT ''"),
+        ("users", "two_step_password", "TEXT DEFAULT NULL"),
+        ("users", "two_step_hint", "TEXT DEFAULT NULL"),
         ("users", "home_lat", "REAL DEFAULT NULL"),
         ("users", "home_lng", "REAL DEFAULT NULL")
     ]
@@ -113,31 +117,10 @@ def ensure_uzb_timezone_migration():
     except Exception as e_out:
         print(f"[TZ MIGRATION ERROR]: {e_out}")
 
-def purge_legacy_test_drivers():
-    """Barcha eski sinov haydovchilari (ahror, 940401009 yoki account_id yo'q) serverdan butunlay tozalab tashlanadi"""
-    try:
-        conn = get_connection()
-        c = conn.cursor()
-        c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='drivers'")
-        if c.fetchone():
-            c.execute("DELETE FROM drivers WHERE phone LIKE '%940401009%' OR account_id = '' OR account_id IS NULL OR lower(full_name) LIKE '%ahror%'")
-            c.execute("DELETE FROM driver_live WHERE phone LIKE '%940401009%' OR lower(driver_name) LIKE '%ahror%'")
-            c.execute("DELETE FROM users WHERE (phone LIKE '%940401009%' OR lower(full_name) LIKE '%ahror%') AND role = 'driver'")
-            c.execute("DELETE FROM user_avatars WHERE phone_clean LIKE '%940401009%'")
-            conn.commit()
-            try:
-                c.execute("VACUUM")
-            except Exception:
-                pass
-        conn.close()
-    except Exception as e:
-        print(f"[PURGE ERROR]: {e}")
-
-# Auto-run migration and purge whenever module is loaded
+# Auto-run migration whenever module is loaded
 try:
     ensure_db_columns()
     ensure_uzb_timezone_migration()
-    purge_legacy_test_drivers()
 except Exception as _e:
     pass
 
@@ -261,10 +244,6 @@ def init_db():
 
     conn.commit()
     conn.close()
-    try:
-        purge_legacy_test_drivers()
-    except Exception:
-        pass
     print("Database initialized successfully at:", DB_PATH)
 
 
@@ -540,18 +519,22 @@ def add_driver(phone, full_name, truck_plate, password='gaz2026', truck_model='I
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
     """, (clean_p, full_name, truck_model, clean_plate, truck_color, assigned_region, assigned_district, assigned_mfy, password, account_id, now_uzb))
     
-    # Also ensure user table has driver role and same account_id
-    c.execute("""
-    INSERT OR REPLACE INTO users (phone, full_name, role, region, district, mfy, account_id, two_step_password, two_step_hint, created_at)
-    VALUES (?, ?, 'driver', ?, ?, ?, ?, NULL, NULL, ?)
-    """, (clean_p, full_name, assigned_region, assigned_district, assigned_mfy, account_id, now_uzb))
-    c.execute("UPDATE users SET two_step_password = NULL, two_step_hint = NULL WHERE phone = ? OR phone LIKE ?", (clean_p, f"%{clean_p[-9:]}%"))
+    try:
+        c.execute("""
+        INSERT OR REPLACE INTO users (phone, full_name, role, region, district, mfy, account_id, two_step_password, two_step_hint, created_at)
+        VALUES (?, ?, 'driver', ?, ?, ?, ?, NULL, NULL, ?)
+        """, (clean_p, full_name, assigned_region, assigned_district, assigned_mfy, account_id, now_uzb))
+        c.execute("UPDATE users SET two_step_password = NULL, two_step_hint = NULL WHERE phone = ? OR phone LIKE ?", (clean_p, f"%{clean_p[-9:]}%"))
+    except Exception as _ue:
+        print(f"Non-critical user sync in add_driver: {_ue}")
 
-    # Also register in driver_live with initial WAITING status
-    c.execute("""
-    INSERT OR REPLACE INTO driver_live (phone, driver_name, truck_plate, truck_model, truck_color, status, stage, lat, lng, region, district, mfy)
-    VALUES (?, ?, ?, ?, ?, 'waiting', 'collect', NULL, NULL, ?, ?, ?)
-    """, (clean_p, full_name, clean_plate, truck_model, truck_color, assigned_region, assigned_district, assigned_mfy))
+    try:
+        c.execute("""
+        INSERT OR REPLACE INTO driver_live (phone, driver_name, truck_plate, truck_model, truck_color, status, stage, lat, lng, region, district, mfy)
+        VALUES (?, ?, ?, ?, ?, 'waiting', 'collect', NULL, NULL, ?, ?, ?)
+        """, (clean_p, full_name, clean_plate, truck_model, truck_color, assigned_region, assigned_district, assigned_mfy))
+    except Exception as _le:
+        print(f"Non-critical driver_live sync in add_driver: {_le}")
 
     conn.commit()
     conn.close()
@@ -702,13 +685,9 @@ def update_driver_profile(account_phone, driver_name=None, truck_plate=None, tru
     return True
 
 def get_all_drivers():
-    try:
-        purge_legacy_test_drivers()
-    except Exception:
-        pass
     conn = get_connection()
     c = conn.cursor()
-    c.execute("SELECT * FROM drivers WHERE is_active = 1 AND phone NOT LIKE '%940401009%' AND lower(full_name) NOT LIKE '%ahror%' AND account_id != '' AND account_id IS NOT NULL ORDER BY id DESC")
+    c.execute("SELECT * FROM drivers WHERE is_active = 1 ORDER BY id DESC")
     rows = c.fetchall()
     conn.close()
     return [dict(r) for r in rows]
